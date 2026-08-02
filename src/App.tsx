@@ -19,6 +19,7 @@ function createId(): string {
 }
 
 function App() {
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [photos, setPhotos] = useState<StoredPhoto[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -36,6 +37,26 @@ function App() {
   useEffect(() => {
     void loadPhotos();
   }, []);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+
 
   const handlePhotoChange = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -101,6 +122,25 @@ function App() {
   return (
     <main className="container">
       <h1>📷 Box Photo Uploader</h1>
+
+      <div
+        className={
+          isOnline
+            ? "network-status online"
+            : "network-status offline"
+        }
+      >
+        <span className="network-dot">●</span>
+
+        {isOnline
+          ? "オンライン：Boxへ送信できます"
+          : "オフライン：写真はブラウザに保存されます"}
+      </div>
+
+      <div className="pending-summary">
+        <span>Box未送信</span>
+        <strong>{photos.length}件</strong>
+      </div>
 
       <div className="photo-actions">
 
