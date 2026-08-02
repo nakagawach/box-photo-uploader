@@ -1,23 +1,101 @@
+:root {
+  color-scheme: light;
+  font-family: "Yu Gothic", "Meiryo", sans-serif;
+  background: #f4f6f8;
+  color: #222;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
   background: #f4f6f8;
-  font-family: sans-serif;
+}
+
+button,
+input {
+  font: inherit;
 }
 
 .container {
+  width: calc(100% - 24px);
   max-width: 700px;
-  margin: auto;
-  padding: 20px;
+  margin: 24px auto;
+  padding: 24px;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 8%);
 }
 
 h1 {
+  margin: 0 0 24px;
+  text-align: center;
+  font-size: 28px;
+}
+
+.photo-input {
+  display: block;
+  padding: 24px;
+  border: 2px dashed #7c8794;
+  border-radius: 12px;
+  background: #f9fbfc;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+
+.photo-input input {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+}
+
+.preview-card {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid #d8dee6;
+  border-radius: 12px;
+  background: white;
+}
+
+.preview-image {
+  display: block;
+  width: 100%;
+  max-height: 500px;
+  border-radius: 10px;
+  object-fit: contain;
+  background: #eef1f4;
+}
+
+.file-name {
+  margin-top: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.empty-message {
+  margin-top: 24px;
+  color: #66717d;
   text-align: center;
 }
 
-input[type='file'] {
-  width: 100%;
-  padding: 20px;
-  border: 2px dashed #999;
-  border-radius: 10px;
-  background: white;
+@media (max-width: 520px) {
+  .container {
+    width: calc(100% - 16px);
+    margin: 8px auto;
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  h1 {
+    font-size: 23px;
+  }
+
+  .photo-input {
+    padding: 18px 12px;
+  }
 }
