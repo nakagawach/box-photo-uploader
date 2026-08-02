@@ -22,9 +22,18 @@ function StoredPhotoCard({
         };
     }, [photo.file]);
 
-    const createdAt = new Date(
-        photo.createdAt
-    ).toLocaleString("ja-JP");
+    const createdAt = new Date(photo.createdAt);
+
+    const formattedDate = createdAt.toLocaleDateString("ja-JP", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    });
+
+    const formattedTime = createdAt.toLocaleTimeString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
 
     return (
         <article className="photo-card">
@@ -44,9 +53,24 @@ function StoredPhotoCard({
                     {(photo.fileSize / 1024 / 1024).toFixed(2)} MB
                 </p>
 
-                <p>登録日時：{createdAt}</p>
+                <p>
+                    登録日時：{formattedDate} {formattedTime}
+                </p>
 
-                <p className="pending-status">状態：未送信</p>
+                <p className="pending-status">
+                    <span className="status-dot">●</span>
+                    未送信
+                </p>
+
+                {previewUrl && (
+                    <a
+                        href={previewUrl}
+                        download={photo.fileName}
+                        className="download-button"
+                    >
+                        ⬇ 端末へ保存
+                    </a>
+                )}
 
                 <button
                     type="button"

@@ -102,18 +102,37 @@ function App() {
     <main className="container">
       <h1>📷 Box Photo Uploader</h1>
 
-      <label className="photo-input">
-        写真を撮る・選ぶ
+      <div className="photo-actions">
 
-        <input
-          type="file"
-          accept="image/*"
-          capture="environment"
-          multiple
-          disabled={isSaving}
-          onChange={handlePhotoChange}
-        />
-      </label>
+        {/* カメラ */}
+        <label className="photo-action-button">
+          📷 カメラで撮影
+
+          <input
+            className="hidden-file-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handlePhotoChange}
+            disabled={isSaving}
+          />
+        </label>
+
+        {/* ライブラリ */}
+        <label className="photo-action-button secondary">
+          🖼 写真から選択
+
+          <input
+            className="hidden-file-input"
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handlePhotoChange}
+            disabled={isSaving}
+          />
+        </label>
+
+      </div>
 
       {isSaving && (
         <p className="saving-message">

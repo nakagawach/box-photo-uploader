@@ -150,8 +150,20 @@ h1 {
 }
 
 .pending-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 4px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #fff4d6;
+  color: #9a6200;
   font-weight: 700;
-  color: #b26a00;
+}
+
+.status-dot {
+  font-size: 12px;
+  color: #e6a100;
 }
 
 .saving-message {
@@ -173,8 +185,8 @@ h1 {
 .delete-button {
   width: 100%;
   margin-top: 10px;
-  padding: 10px 14px;
-  border: 1px solid #c62828;
+  padding: 11px 14px;
+  border: 1px solid #d32f2f;
   border-radius: 8px;
   background: #fff;
   color: #c62828;
@@ -184,4 +196,75 @@ h1 {
 
 .delete-button:hover {
   background: #fff1f1;
+}
+
+.photo-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.photo-action-button {
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  height: 56px;
+
+  border-radius: 10px;
+
+  background: #1769aa;
+
+  color: white;
+
+  font-weight: bold;
+
+  cursor: pointer;
+
+  user-select: none;
+}
+
+.photo-action-button.secondary {
+
+  background: white;
+
+  color: #1769aa;
+
+  border: 2px solid #1769aa;
+
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.download-button {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 11px 14px;
+  border: 1px solid #1f9d45;
+  border-radius: 8px;
+  background: #24a948;
+  color: #fff;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.download-button:hover {
+  background: #1f913e;
+}
+
+@media(max-width:600px) {
+
+  .photo-actions {
+
+    grid-template-columns: 1fr;
+
+  }
+
 }
