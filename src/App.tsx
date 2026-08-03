@@ -83,7 +83,115 @@ async function createThumbnail(
   return webpBlob;
 }
 
+const MAKE_WEBHOOK_URL = "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v";
+
+type MakeUploadResult = {
+  success?: boolean;
+  fileId?: string;
+  fileName?: string;
+  error?: string;
+};
+
+async function uploadPhotoToMake(
+  photo: StoredPhoto,
+  apiKey: string
+): Promise<MakeUploadResult> {
+  if (!photo.file) {
+    throw new Error("写真本体がありません。");
+  }
+
+  if (apiKey.trim() === "") {
+    throw new Error(
+      "Make Webhook APIキーを入力してください。"
+    );
+  }
+
+  const uploadFile = new File(
+    [photo.file],
+    photo.fileName,
+    {
+      type:
+        photo.fileType ||
+        photo.file.type ||
+        "application/octet-stream",
+    }
+  );
+
+  const formData = new FormData();
+
+  formData.append("file", uploadFile);
+  formData.append("fileName", photo.fileName);
+  formData.append("photoId", photo.id);
+  formData.append("createdAt", photo.createdAt);
+  formData.append(
+    "fileSize",
+    String(photo.fileSize)
+  );
+
+  const response = await fetch(MAKE_WEBHOOK_URL, {
+    method: "POST",
+    headers: {
+      "X-Make-Apikey": apiKey.trim(),
+    },
+    body: formData,
+  });
+
+  const responseText = await response.text();
+
+  let result: MakeUploadResult = {};
+
+  if (responseText) {
+    try {
+      result = JSON.parse(
+        responseText
+      ) as MakeUploadResult;
+    } catch {
+      result = {};
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      result.error ||
+      `Makeへの送信に失敗しました。HTTP ${response.status}`
+    );
+  }
+
+  return result;
+}
+
+const testMakeWebhook = async () => {
+  alert("テスト開始");
+
+  const firstPhoto = pendingPhotos[0];
+
+  if (!firstPhoto) {
+    setErrorMessage("先に写真を1枚保存してください。");
+    return;
+  }
+
+  try {
+    setErrorMessage("");
+
+    await uploadPhotoToMake(
+      firstPhoto,
+      makeApiKey
+    );
+
+    alert("Makeがリクエストを受け付けました。");
+  } catch (error) {
+    console.error(error);
+
+    setErrorMessage(
+      error instanceof Error
+        ? error.message
+        : "Makeへの送信に失敗しました。"
+    );
+  }
+};
+
 function App() {
+  const [makeApiKey, setMakeApiKey] = useState("");
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [photos, setPhotos] = useState<StoredPhoto[]>([]);
   const [activeTab, setActiveTab] =
@@ -101,6 +209,46 @@ function App() {
       console.error(error);
       setErrorMessage(
         "保存済み写真を読み込めませんでした。"
+      );
+    }
+  };
+
+  const testMakeWebhookOnly = async () => {
+    const firstPhoto = pendingPhotos[0];
+
+    if (!firstPhoto?.file) {
+      alert("未送信写真を1枚用意してください。");
+      return;
+    }
+
+    const formData = new FormData();
+
+    formData.append(
+      "file",
+      new File([firstPhoto.file], firstPhoto.fileName, {
+        type: firstPhoto.fileType || "application/octet-stream",
+      })
+    );
+
+    formData.append("fileName", firstPhoto.fileName);
+    formData.append("photoId", firstPhoto.id);
+    formData.append("createdAt", firstPhoto.createdAt);
+    formData.append("fileSize", String(firstPhoto.fileSize));
+
+    try {
+      const response = await fetch(MAKE_WEBHOOK_URL, {
+        method: "POST",
+        body: formData,
+      });
+
+      alert(`Make応答：HTTP ${response.status}`);
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Makeへの通信に失敗しました。"
       );
     }
   };
@@ -409,8 +557,35 @@ function App() {
             </p>
           )}
       </section>
+      <label className="token-field">
+        <span>Make Webhook APIキー</span>
+
+        <input
+          type="password"
+          value={makeApiKey}
+          onChange={(event) =>
+            setMakeApiKey(event.target.value)
+          }
+          placeholder="テスト用APIキーを入力"
+          autoComplete="off"
+        />
+
+        <small>
+          APIキーは保存されず、再読み込みすると消えます。
+        </small>
+      </label>
+      <button
+        type="button"
+        className="upload-button"
+        onClick={testMakeWebhookOnly}
+        disabled={pendingPhotos.length === 0}
+      >
+        Make Webhook接続テスト
+      </button>
     </main>
   );
 }
+
+
 
 export default App;
