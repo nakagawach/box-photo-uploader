@@ -23,6 +23,7 @@ function App() {
   const [photos, setPhotos] = useState<StoredPhoto[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
 
   const loadPhotos = async () => {
     try {
@@ -56,7 +57,23 @@ function App() {
     };
   }, []);
 
+  const uploadPhotos = async () => {
 
+    if (photos.length === 0) {
+      return;
+    }
+
+    setIsUploading(true);
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, 2000)
+    );
+
+    alert("Boxへ送信しました（ダミー）");
+
+    setIsUploading(false);
+
+  };
 
   const handlePhotoChange = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -189,6 +206,18 @@ function App() {
           <h2>未送信写真</h2>
           <span>{photos.length}件</span>
         </div>
+
+        <button
+          className="upload-button"
+          onClick={uploadPhotos}
+          disabled={isUploading || photos.length === 0}
+        >
+
+          {isUploading
+            ? "送信中..."
+            : "Boxへ送信"}
+
+        </button>
 
         {photos.length === 0 ? (
           <p className="empty-message">

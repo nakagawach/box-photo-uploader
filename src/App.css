@@ -322,3 +322,35 @@ h1 {
   color: #1769aa;
   font-size: 18px;
 }
+
+.upload-button {
+
+  width: 100%;
+
+  margin-bottom: 24px;
+
+  padding: 14px;
+
+  background: #1769aa;
+
+  color: white;
+
+  border: none;
+
+  border-radius: 8px;
+
+  font-size: 17px;
+
+  font-weight: bold;
+
+  cursor: pointer;
+
+}
+
+.upload-button:disabled {
+
+  opacity: .5;
+
+  cursor: not-allowed;
+
+}
