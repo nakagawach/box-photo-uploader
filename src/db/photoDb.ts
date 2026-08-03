@@ -119,3 +119,82 @@ export async function deletePhoto(
         };
     });
 }
+
+export async function updatePhoto(
+    photo: StoredPhoto
+): Promise<void> {
+    const db = await openPhotoDb();
+
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+            STORE_NAME,
+            "readwrite"
+        );
+
+        transaction.objectStore(STORE_NAME).put(photo);
+
+        transaction.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+
+        transaction.onerror = () => {
+            db.close();
+            reject(transaction.error);
+        };
+
+        transaction.onabort = () => {
+            db.close();
+            reject(transaction.error);
+        };
+    });
+}
+
+export async function deleteExpiredSentPhotos(): Promise<void> {
+    const db = await openPhotoDb();
+
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+            STORE_NAME,
+            "readwrite"
+        );
+
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+
+        request.onsuccess = () => {
+            const photos = request.result as StoredPhoto[];
+
+            const sevenDaysAgo = new Date();
+
+            sevenDaysAgo.setDate(
+                sevenDaysAgo.getDate() - 7
+            );
+
+            photos.forEach((photo) => {
+                if (
+                    photo.status === "sent" &&
+                    photo.sentAt &&
+                    new Date(photo.sentAt) < sevenDaysAgo
+                ) {
+                    store.delete(photo.id);
+                }
+            });
+        };
+
+        transaction.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+
+        transaction.onerror = () => {
+            db.close();
+            reject(transaction.error);
+        };
+
+        transaction.onabort = () => {
+            db.close();
+            reject(transaction.error);
+        };
+    });
+}
