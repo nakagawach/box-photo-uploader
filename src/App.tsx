@@ -24,7 +24,7 @@ function createId(): string {
 
 async function createThumbnail(
   source: Blob,
-  maxSize = 480
+  maxSize = 800
 ): Promise<Blob> {
   const imageBitmap = await createImageBitmap(source);
 
@@ -54,24 +54,33 @@ async function createThumbnail(
     throw new Error("Canvasを作成できませんでした。");
   }
 
-  context.drawImage(imageBitmap, 0, 0, width, height);
+  context.drawImage(
+    imageBitmap,
+    0,
+    0,
+    width,
+    height
+  );
+
   imageBitmap.close();
 
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          resolve(blob);
-        } else {
-          reject(
-            new Error("サムネイルを作成できませんでした。")
-          );
-        }
-      },
-      "image/jpeg",
-      0.82
+  const webpBlob = await new Promise<Blob | null>(
+    (resolve) => {
+      canvas.toBlob(
+        resolve,
+        "image/webp",
+        0.9
+      );
+    }
+  );
+
+  if (!webpBlob) {
+    throw new Error(
+      "WebPサムネイルを作成できませんでした。"
     );
-  });
+  }
+
+  return webpBlob;
 }
 
 function App() {
@@ -293,11 +302,6 @@ function App() {
         {isOnline
           ? "オンライン：Boxへ送信できます"
           : "オフライン：写真はブラウザに保存されます"}
-      </div>
-
-      <div className="pending-summary">
-        <span>Box未送信</span>
-        <strong>{pendingPhotos.length}件</strong>
       </div>
 
       <div className="photo-actions">

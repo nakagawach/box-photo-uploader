@@ -306,23 +306,6 @@ h1 {
   color: #e39a17;
 }
 
-.pending-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  border: 1px solid #d8dee6;
-  border-radius: 9px;
-  background: #fff;
-  color: #222;
-}
-
-.pending-summary strong {
-  color: #1769aa;
-  font-size: 18px;
-}
-
 .upload-button {
 
   width: 100%;
