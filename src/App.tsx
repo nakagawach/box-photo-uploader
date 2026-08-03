@@ -85,13 +85,6 @@ async function createThumbnail(
 
 const MAKE_WEBHOOK_URL = "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v";
 
-type MakeUploadResult = {
-  success?: boolean;
-  fileId?: string;
-  fileName?: string;
-  error?: string;
-};
-
 function App() {
   const [makeApiKey, setMakeApiKey] = useState("");
   const [isOnline, setIsOnline] = useState(navigator.onLine);
