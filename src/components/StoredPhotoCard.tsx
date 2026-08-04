@@ -21,7 +21,9 @@ const tagOptions = [
   "その他",
 ];
 
-function formatDateTime(dateText: string): string {
+function formatDateTime(
+  dateText: string
+): string {
   return new Date(dateText).toLocaleString(
     "ja-JP",
     {
@@ -48,8 +50,8 @@ function StoredPhotoCard({
   const isSent = photo.status === "sent";
 
   /*
-   * 古い保存データにはtagsが存在しないことがあるため、
-   * 空配列を予備値にしています。
+   * 過去の保存データにtagsがない場合も
+   * エラーにならないようにします。
    */
   const currentTags = photo.tags ?? [];
 
@@ -84,8 +86,9 @@ function StoredPhotoCard({
 
     const nextTags = isSelected
       ? currentTags.filter(
-          (currentTag) => currentTag !== tag
-        )
+        (currentTag) =>
+          currentTag !== tag
+      )
       : [...currentTags, tag];
 
     try {
@@ -102,6 +105,7 @@ function StoredPhotoCard({
 
   return (
     <article className="photo-card">
+      {/* 写真 */}
       {previewUrl && (
         <img
           className="preview-image"
@@ -110,6 +114,62 @@ function StoredPhotoCard({
         />
       )}
 
+      {/* 写真の直下にタグを表示 */}
+      <div className="tag-section">
+        <p className="tag-label">
+          {isSent
+            ? "送信した写真タグ"
+            : "写真タグを選択"}
+        </p>
+
+        {!isSent && (
+          <div className="tag-list">
+            {tagOptions.map((tag) => {
+              const isSelected =
+                currentTags.includes(tag);
+
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  className={
+                    isSelected
+                      ? "tag-button selected"
+                      : "tag-button"
+                  }
+                  disabled={isUpdatingTags}
+                  onClick={() =>
+                    void handleTagClick(tag)
+                  }
+                >
+                  {tag}
+                  {isSelected ? " ✓" : ""}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {isSent &&
+          (currentTags.length === 0 ? (
+            <p className="no-tag-message">
+              タグなし
+            </p>
+          ) : (
+            <div className="selected-tag-list">
+              {currentTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="selected-tag"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ))}
+      </div>
+
+      {/* ファイル情報 */}
       <div className="photo-information">
         <p className="file-name">
           {photo.fileName}
@@ -136,72 +196,22 @@ function StoredPhotoCard({
           </>
         )}
 
-        {isSent && photo.sentAt && (
+        {isSent && (
           <>
-            <p>
-              送信日時：
-              {formatDateTime(photo.sentAt)}
-            </p>
+            {photo.sentAt && (
+              <p>
+                送信日時：
+                {formatDateTime(
+                  photo.sentAt
+                )}
+              </p>
+            )}
 
             <p className="history-description">
               Box送信済み・履歴は7日間保存
             </p>
           </>
         )}
-
-        <div className="tag-section">
-          <p className="tag-label">
-            {isSent
-              ? "送信した写真タグ"
-              : "写真タグ"}
-          </p>
-
-          {!isSent && (
-            <div className="tag-list">
-              {tagOptions.map((tag) => {
-                const isSelected =
-                  currentTags.includes(tag);
-
-                return (
-                  <button
-                    key={tag}
-                    type="button"
-                    className={
-                      isSelected
-                        ? "tag-button selected"
-                        : "tag-button"
-                    }
-                    disabled={isUpdatingTags}
-                    onClick={() =>
-                      void handleTagClick(tag)
-                    }
-                  >
-                    {tag}
-                    {isSelected ? " ✓" : ""}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {isSent &&
-            (currentTags.length === 0 ? (
-              <p className="no-tag-message">
-                タグなし
-              </p>
-            ) : (
-              <div className="selected-tag-list">
-                {currentTags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="selected-tag"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            ))}
-        </div>
 
         <p
           className={
@@ -214,7 +224,9 @@ function StoredPhotoCard({
             ●
           </span>
 
-          {isSent ? "送信済み" : "未送信"}
+          {isSent
+            ? "送信済み"
+            : "未送信"}
         </p>
 
         {!isSent && previewUrl && (
