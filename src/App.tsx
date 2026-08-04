@@ -12,15 +12,13 @@ import type { StoredPhoto } from "./types/Photo";
 
 type ActiveTab = "pending" | "sent";
 
-/*
- * MakeのCustom Webhook URLを設定します。
- * URLの固有部分は、このチャットには貼らないでください。
- */
 const MAKE_WEBHOOK_URL =
   "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v";
 
 function createId(): string {
-  if (typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
 
@@ -29,40 +27,48 @@ function createId(): string {
     .slice(2)}`;
 }
 
-/*
- * 送信済み履歴用のWebPサムネイルを作ります。
- * 長辺800px・品質90%です。
- */
 async function createThumbnail(
   source: Blob,
   maxSize = 800
 ): Promise<Blob> {
-  const imageBitmap = await createImageBitmap(source);
+  const imageBitmap =
+    await createImageBitmap(source);
 
   const scale = Math.min(
     1,
     maxSize /
-    Math.max(imageBitmap.width, imageBitmap.height)
+    Math.max(
+      imageBitmap.width,
+      imageBitmap.height
+    )
   );
 
   const width = Math.max(
     1,
-    Math.round(imageBitmap.width * scale)
+    Math.round(
+      imageBitmap.width * scale
+    )
   );
 
   const height = Math.max(
     1,
-    Math.round(imageBitmap.height * scale)
+    Math.round(
+      imageBitmap.height * scale
+    )
   );
 
-  const canvas = document.createElement("canvas");
+  const canvas =
+    document.createElement("canvas");
+
   canvas.width = width;
   canvas.height = height;
 
-  const context = canvas.getContext("2d");
+  const context =
+    canvas.getContext("2d");
 
   if (!context) {
     imageBitmap.close();
+
     throw new Error(
       "サムネイル用Canvasを作成できませんでした。"
     );
@@ -78,11 +84,16 @@ async function createThumbnail(
 
   imageBitmap.close();
 
-  const webpBlob = await new Promise<Blob | null>(
-    (resolve) => {
-      canvas.toBlob(resolve, "image/webp", 0.9);
-    }
-  );
+  const webpBlob =
+    await new Promise<Blob | null>(
+      (resolve) => {
+        canvas.toBlob(
+          resolve,
+          "image/webp",
+          0.9
+        );
+      }
+    );
 
   if (!webpBlob) {
     throw new Error(
@@ -93,30 +104,69 @@ async function createThumbnail(
   return webpBlob;
 }
 
-/*
- * 写真1枚をMake Webhookへ送ります。
- * Make側でBoxへのアップロードが完了し、
- * HTTP 200が返れば成功と判断します。
- */
+function createUploadFileName(
+  photo: StoredPhoto
+): string {
+  const createdAt = new Date(photo.createdAt);
+
+  const datePart = [
+    createdAt.getFullYear(),
+    String(createdAt.getMonth() + 1).padStart(2, "0"),
+    String(createdAt.getDate()).padStart(2, "0"),
+  ].join("");
+
+  const timePart = [
+    String(createdAt.getHours()).padStart(2, "0"),
+    String(createdAt.getMinutes()).padStart(2, "0"),
+    String(createdAt.getSeconds()).padStart(2, "0"),
+  ].join("");
+
+  const tagPart =
+    (photo.tags ?? []).length > 0
+      ? photo.tags.join("_")
+      : "タグなし";
+
+  const idPart = photo.id
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 8);
+
+  const extension =
+    photo.fileName.match(/\.[^.]+$/)?.[0] ?? "";
+
+  const originalName = photo.fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .slice(0, 40);
+
+  return `${datePart}_${timePart}_${tagPart}_${idPart}_${originalName}${extension}`;
+}
+
 async function uploadPhotoToMake(
   photo: StoredPhoto
 ): Promise<void> {
   if (!photo.file) {
-    throw new Error("写真本体がありません。");
+    throw new Error(
+      "写真本体がありません。"
+    );
   }
 
   if (
     !MAKE_WEBHOOK_URL ||
-    MAKE_WEBHOOK_URL.includes("ここを実際")
+    MAKE_WEBHOOK_URL.includes(
+      "実際のWebhook"
+    )
   ) {
     throw new Error(
       "Make Webhook URLが設定されていません。"
     );
   }
 
-  const uploadFile = new File(
+  const uploadFileName =
+    createUploadFileName(photo);
+
+  const uploadFile = new File( 
     [photo.file],
-    photo.fileName,
+    uploadFileName,
     {
       type:
         photo.fileType ||
@@ -127,19 +177,47 @@ async function uploadPhotoToMake(
 
   const formData = new FormData();
 
-  formData.append("file", uploadFile);
-  formData.append("fileName", photo.fileName);
-  formData.append("photoId", photo.id);
-  formData.append("createdAt", photo.createdAt);
+  formData.append(
+    "file",
+    uploadFile
+  );
+
+  formData.append(
+    "fileName",
+    uploadFileName
+  );
+
+  formData.append(
+    "photoId",
+    photo.id
+  );
+
+  formData.append(
+    "createdAt",
+    photo.createdAt
+  );
+
   formData.append(
     "fileSize",
     String(photo.fileSize)
   );
 
-  const response = await fetch(MAKE_WEBHOOK_URL, {
-    method: "POST",
-    body: formData,
-  });
+  /*
+   * MakeにはJSON文字列としてタグを送ります。
+   * 例：["境界標","接道"]
+   */
+  formData.append(
+    "tags",
+    JSON.stringify(photo.tags ?? [])
+  );
+
+  const response = await fetch(
+    MAKE_WEBHOOK_URL,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -149,13 +227,11 @@ async function uploadPhotoToMake(
 }
 
 function App() {
-  const [isOnline, setIsOnline] = useState(
-    navigator.onLine
-  );
+  const [isOnline, setIsOnline] =
+    useState(navigator.onLine);
 
-  const [photos, setPhotos] = useState<
-    StoredPhoto[]
-  >([]);
+  const [photos, setPhotos] =
+    useState<StoredPhoto[]>([]);
 
   const [activeTab, setActiveTab] =
     useState<ActiveTab>("pending");
@@ -171,8 +247,20 @@ function App() {
 
   const loadPhotos = async () => {
     try {
-      const savedPhotos = await getAllPhotos();
-      setPhotos(savedPhotos);
+      const savedPhotos =
+        await getAllPhotos();
+
+      /*
+       * 過去に保存したデータにtagsがなくても
+       * 動作するように補完します。
+       */
+      const normalizedPhotos =
+        savedPhotos.map((photo) => ({
+          ...photo,
+          tags: photo.tags ?? [],
+        }));
+
+      setPhotos(normalizedPhotos);
     } catch (error) {
       console.error(error);
 
@@ -190,10 +278,6 @@ function App() {
     (photo) => photo.status === "sent"
   );
 
-  /*
-   * 起動時に7日を超えた送信履歴を削除し、
-   * IndexedDBから一覧を読み込みます。
-   */
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -211,9 +295,6 @@ function App() {
     void initialize();
   }, []);
 
-  /*
-   * オンライン・オフラインの変化を監視します。
-   */
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -246,10 +327,6 @@ function App() {
     };
   }, []);
 
-  /*
-   * 未送信写真を順番にMakeへ送ります。
-   * 成功した写真だけ送信済みに変更します。
-   */
   const uploadPhotos = async () => {
     if (
       pendingPhotos.length === 0 ||
@@ -270,51 +347,32 @@ function App() {
           continue;
         }
 
-        /*
-         * Make経由でBoxへ原寸写真を送信
-         */
         await uploadPhotoToMake(photo);
 
-        /*
-         * Box送信成功後に履歴用サムネイルを作成
-         */
         const thumbnail =
-          await createThumbnail(photo.file);
+          await createThumbnail(
+            photo.file
+          );
 
         const sentPhoto: StoredPhoto = {
           ...photo,
-
-          /*
-           * 原寸写真はIndexedDBから外します。
-           */
+          tags: photo.tags ?? [],
           file: undefined,
-
-          /*
-           * WebPサムネイルだけ7日間保持します。
-           */
           thumbnail,
-
           status: "sent",
-          sentAt: new Date().toISOString(),
-
-          /*
-           * MakeからBoxファイルIDを
-           * まだ返していないため空欄です。
-           */
+          sentAt:
+            new Date().toISOString(),
           boxFileId: "",
           boxUrl: "",
           errorMessage: undefined,
         };
 
         await updatePhoto(sentPhoto);
+
         successCount += 1;
       }
 
       await loadPhotos();
-
-      /*
-       * 送信後は送信済みタブへ移動します。
-       */
       setActiveTab("sent");
 
       alert(
@@ -323,10 +381,6 @@ function App() {
     } catch (error) {
       console.error(error);
 
-      /*
-       * 途中まで成功した写真の状態も
-       * 画面へ反映します。
-       */
       await loadPhotos();
 
       setErrorMessage(
@@ -339,9 +393,6 @@ function App() {
     }
   };
 
-  /*
-   * カメラ撮影・写真選択時の保存処理
-   */
   const handlePhotoChange = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -364,23 +415,18 @@ function App() {
         fileName: file.name,
         fileType: file.type,
         fileSize: file.size,
-        createdAt: new Date().toISOString(),
+        createdAt:
+          new Date().toISOString(),
         status: "pending",
+        tags: [],
       }));
 
     try {
-      /*
-       * 通信状態に関係なく、
-       * 必ず先にIndexedDBへ保存します。
-       */
       await savePhotos(newPhotos);
       await loadPhotos();
 
       setActiveTab("pending");
 
-      /*
-       * 同じファイルを再選択できるようにします。
-       */
       event.target.value = "";
     } catch (error) {
       console.error(error);
@@ -393,7 +439,57 @@ function App() {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleTagsChange = async (
+    id: string,
+    tags: string[]
+  ) => {
+    const targetPhoto = photos.find(
+      (photo) => photo.id === id
+    );
+
+    if (!targetPhoto) {
+      return;
+    }
+
+    const updatedPhoto: StoredPhoto = {
+      ...targetPhoto,
+      tags,
+    };
+
+    /*
+     * 先に画面を更新するため、
+     * タップ直後にタグの色が変わります。
+     */
+    setPhotos((currentPhotos) =>
+      currentPhotos.map((photo) =>
+        photo.id === id
+          ? updatedPhoto
+          : photo
+      )
+    );
+
+    try {
+      await updatePhoto(updatedPhoto);
+    } catch (error) {
+      console.error(error);
+
+      /*
+       * 保存失敗時はIndexedDBから
+       * 正しい状態を再読込します。
+       */
+      await loadPhotos();
+
+      setErrorMessage(
+        "タグの保存に失敗しました。"
+      );
+
+      throw error;
+    }
+  };
+
+  const handleDelete = async (
+    id: string
+  ) => {
     const confirmed = window.confirm(
       "この写真または履歴を削除しますか？"
     );
@@ -430,7 +526,9 @@ function App() {
             : "network-status offline"
         }
       >
-        <span className="network-dot">●</span>
+        <span className="network-dot">
+          ●
+        </span>
 
         {isOnline
           ? "オンライン：Boxへ送信できます"
@@ -535,13 +633,18 @@ function App() {
           </p>
         ) : (
           <div className="photo-list">
-            {displayedPhotos.map((photo) => (
-              <StoredPhotoCard
-                key={photo.id}
-                photo={photo}
-                onDelete={handleDelete}
-              />
-            ))}
+            {displayedPhotos.map(
+              (photo) => (
+                <StoredPhotoCard
+                  key={photo.id}
+                  photo={photo}
+                  onDelete={handleDelete}
+                  onTagsChange={
+                    handleTagsChange
+                  }
+                />
+              )
+            )}
           </div>
         )}
 

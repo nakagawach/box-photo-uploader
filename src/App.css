@@ -442,3 +442,92 @@ h1 {
   color: #66717d;
   font-size: 12px;
 }
+
+/* 写真タグ */
+.tag-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e1e6eb;
+}
+
+.tag-label {
+  margin: 0 0 10px;
+  color: #333;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid #b8c2cc;
+  border-radius: 999px;
+  background: #fff;
+  color: #4c5966;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.tag-button:hover {
+  border-color: #1769aa;
+  background: #f2f8fc;
+}
+
+.tag-button.selected {
+  border-color: #1769aa;
+  background: #e4f1fa;
+  color: #145f99;
+}
+
+.tag-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.tag-button:active {
+  transform: scale(0.97);
+}
+
+.selected-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.selected-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 31px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #e4f1fa;
+  color: #145f99;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.no-tag-message {
+  margin: 0;
+  color: #78838e;
+  font-size: 13px;
+}
+
+@media (max-width: 520px) {
+  .tag-list {
+    gap: 7px;
+  }
+
+  .tag-button {
+    min-height: 38px;
+    padding: 8px 11px;
+    font-size: 13px;
+  }
+}

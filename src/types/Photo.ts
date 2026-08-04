@@ -1,26 +1,29 @@
 export type PhotoStatus =
-    | "pending"
-    | "uploading"
-    | "sent"
-    | "failed";
+  | "pending"
+  | "uploading"
+  | "sent"
+  | "failed";
 
 export type StoredPhoto = {
-    id: string;
+  id: string;
 
-    // 未送信時の原寸写真
-    file?: Blob;
+  // 未送信時の原寸写真
+  file?: Blob;
 
-    // 送信済み履歴用の小さい画像
-    thumbnail?: Blob;
+  // 送信済み履歴用のWebPサムネイル
+  thumbnail?: Blob;
 
-    fileName: string;
-    fileType: string;
-    fileSize: number;
-    createdAt: string;
-    status: PhotoStatus;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  createdAt: string;
+  status: PhotoStatus;
 
-    sentAt?: string;
-    boxFileId?: string;
-    boxUrl?: string;
-    errorMessage?: string;
+  // 写真に付ける複数タグ
+  tags: string[];
+
+  sentAt?: string;
+  boxFileId?: string;
+  boxUrl?: string;
+  errorMessage?: string;
 };
