@@ -12,6 +12,13 @@ import type { StoredPhoto } from "./types/Photo";
 
 type ActiveTab = "pending" | "sent";
 
+/*
+ * MakeのCustom Webhook URLを設定します。
+ * URLの固有部分は、このチャットには貼らないでください。
+ */
+const MAKE_WEBHOOK_URL =
+  "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v";
+
 function createId(): string {
   if (typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -22,6 +29,10 @@ function createId(): string {
     .slice(2)}`;
 }
 
+/*
+ * 送信済み履歴用のWebPサムネイルを作ります。
+ * 長辺800px・品質90%です。
+ */
 async function createThumbnail(
   source: Blob,
   maxSize = 800
@@ -30,7 +41,8 @@ async function createThumbnail(
 
   const scale = Math.min(
     1,
-    maxSize / Math.max(imageBitmap.width, imageBitmap.height)
+    maxSize /
+    Math.max(imageBitmap.width, imageBitmap.height)
   );
 
   const width = Math.max(
@@ -51,7 +63,9 @@ async function createThumbnail(
 
   if (!context) {
     imageBitmap.close();
-    throw new Error("Canvasを作成できませんでした。");
+    throw new Error(
+      "サムネイル用Canvasを作成できませんでした。"
+    );
   }
 
   context.drawImage(
@@ -66,11 +80,7 @@ async function createThumbnail(
 
   const webpBlob = await new Promise<Blob | null>(
     (resolve) => {
-      canvas.toBlob(
-        resolve,
-        "image/webp",
-        0.9
-      );
+      canvas.toBlob(resolve, "image/webp", 0.9);
     }
   );
 
@@ -83,18 +93,81 @@ async function createThumbnail(
   return webpBlob;
 }
 
-const MAKE_WEBHOOK_URL = "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v";
+/*
+ * 写真1枚をMake Webhookへ送ります。
+ * Make側でBoxへのアップロードが完了し、
+ * HTTP 200が返れば成功と判断します。
+ */
+async function uploadPhotoToMake(
+  photo: StoredPhoto
+): Promise<void> {
+  if (!photo.file) {
+    throw new Error("写真本体がありません。");
+  }
+
+  if (
+    !MAKE_WEBHOOK_URL ||
+    MAKE_WEBHOOK_URL.includes("ここを実際")
+  ) {
+    throw new Error(
+      "Make Webhook URLが設定されていません。"
+    );
+  }
+
+  const uploadFile = new File(
+    [photo.file],
+    photo.fileName,
+    {
+      type:
+        photo.fileType ||
+        photo.file.type ||
+        "application/octet-stream",
+    }
+  );
+
+  const formData = new FormData();
+
+  formData.append("file", uploadFile);
+  formData.append("fileName", photo.fileName);
+  formData.append("photoId", photo.id);
+  formData.append("createdAt", photo.createdAt);
+  formData.append(
+    "fileSize",
+    String(photo.fileSize)
+  );
+
+  const response = await fetch(MAKE_WEBHOOK_URL, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Makeへの送信に失敗しました。HTTP ${response.status}`
+    );
+  }
+}
 
 function App() {
-  const [makeApiKey, setMakeApiKey] = useState("");
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [photos, setPhotos] = useState<StoredPhoto[]>([]);
+  const [isOnline, setIsOnline] = useState(
+    navigator.onLine
+  );
+
+  const [photos, setPhotos] = useState<
+    StoredPhoto[]
+  >([]);
+
   const [activeTab, setActiveTab] =
     useState<ActiveTab>("pending");
 
-  const [isSaving, setIsSaving] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [isSaving, setIsSaving] =
+    useState(false);
+
+  const [isUploading, setIsUploading] =
+    useState(false);
+
+  const [errorMessage, setErrorMessage] =
+    useState("");
 
   const loadPhotos = async () => {
     try {
@@ -102,53 +175,13 @@ function App() {
       setPhotos(savedPhotos);
     } catch (error) {
       console.error(error);
+
       setErrorMessage(
         "保存済み写真を読み込めませんでした。"
       );
     }
   };
 
-  const testMakeWebhookOnly = async () => {
-    const firstPhoto = pendingPhotos[0];
-
-    if (!firstPhoto?.file) {
-      alert("未送信写真を1枚用意してください。");
-      return;
-    }
-
-    const formData = new FormData();
-
-    formData.append(
-      "file",
-      new File([firstPhoto.file], firstPhoto.fileName, {
-        type: firstPhoto.fileType || "application/octet-stream",
-      })
-    );
-
-    formData.append("fileName", firstPhoto.fileName);
-    formData.append("photoId", firstPhoto.id);
-    formData.append("createdAt", firstPhoto.createdAt);
-    formData.append("fileSize", String(firstPhoto.fileSize));
-
-    try {
-      const response = await fetch(MAKE_WEBHOOK_URL, {
-        method: "POST",
-        body: formData,
-      });
-
-      alert(`Make応答：HTTP ${response.status}`);
-    } catch (error) {
-      console.error(error);
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Makeへの通信に失敗しました。"
-      );
-    }
-  };
-
-  // 未送信と送信済みを分ける
   const pendingPhotos = photos.filter(
     (photo) => photo.status !== "sent"
   );
@@ -157,8 +190,10 @@ function App() {
     (photo) => photo.status === "sent"
   );
 
-  // アプリ起動時：
-  // 7日を超えた送信済み履歴を削除して一覧を読み込む
+  /*
+   * 起動時に7日を超えた送信履歴を削除し、
+   * IndexedDBから一覧を読み込みます。
+   */
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -166,6 +201,7 @@ function App() {
         await loadPhotos();
       } catch (error) {
         console.error(error);
+
         setErrorMessage(
           "写真データの初期処理に失敗しました。"
         );
@@ -175,7 +211,9 @@ function App() {
     void initialize();
   }, []);
 
-  // オンライン・オフライン状態を監視
+  /*
+   * オンライン・オフラインの変化を監視します。
+   */
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
@@ -185,16 +223,33 @@ function App() {
       setIsOnline(false);
     };
 
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+    window.addEventListener(
+      "online",
+      handleOnline
+    );
+
+    window.addEventListener(
+      "offline",
+      handleOffline
+    );
 
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener(
+        "online",
+        handleOnline
+      );
+
+      window.removeEventListener(
+        "offline",
+        handleOffline
+      );
     };
   }, []);
 
-  // ダミーBox送信
+  /*
+   * 未送信写真を順番にMakeへ送ります。
+   * 成功した写真だけ送信済みに変更します。
+   */
   const uploadPhotos = async () => {
     if (
       pendingPhotos.length === 0 ||
@@ -207,59 +262,86 @@ function App() {
     setIsUploading(true);
     setErrorMessage("");
 
+    let successCount = 0;
+
     try {
-      // 現時点ではBox送信を再現するため2秒待機
-      await new Promise((resolve) =>
-        setTimeout(resolve, 2000)
-      );
-
-      const sentAt = new Date().toISOString();
-
       for (const photo of pendingPhotos) {
         if (!photo.file) {
           continue;
         }
 
-        // 原寸写真から小さいサムネイルを作る
-        const thumbnail = await createThumbnail(photo.file);
+        /*
+         * Make経由でBoxへ原寸写真を送信
+         */
+        await uploadPhotoToMake(photo);
+
+        /*
+         * Box送信成功後に履歴用サムネイルを作成
+         */
+        const thumbnail =
+          await createThumbnail(photo.file);
 
         const sentPhoto: StoredPhoto = {
           ...photo,
 
-          // 原寸画像はブラウザDBから外す
+          /*
+           * 原寸写真はIndexedDBから外します。
+           */
           file: undefined,
 
-          // 小さいサムネイルだけ7日間残す
+          /*
+           * WebPサムネイルだけ7日間保持します。
+           */
           thumbnail,
 
           status: "sent",
-          sentAt,
+          sentAt: new Date().toISOString(),
 
-          // 現在はダミー値
-          boxFileId: `dummy-${photo.id}`,
+          /*
+           * MakeからBoxファイルIDを
+           * まだ返していないため空欄です。
+           */
+          boxFileId: "",
           boxUrl: "",
           errorMessage: undefined,
         };
 
         await updatePhoto(sentPhoto);
+        successCount += 1;
       }
 
       await loadPhotos();
 
-      // 送信済みタブへ自動で移動
+      /*
+       * 送信後は送信済みタブへ移動します。
+       */
       setActiveTab("sent");
 
-      alert("Boxへ送信しました（ダミー）");
+      alert(
+        `${successCount}件をBoxへ送信しました。`
+      );
     } catch (error) {
       console.error(error);
+
+      /*
+       * 途中まで成功した写真の状態も
+       * 画面へ反映します。
+       */
+      await loadPhotos();
+
       setErrorMessage(
-        "写真の送信処理に失敗しました。"
+        error instanceof Error
+          ? error.message
+          : "Boxへの送信に失敗しました。"
       );
     } finally {
       setIsUploading(false);
     }
   };
 
+  /*
+   * カメラ撮影・写真選択時の保存処理
+   */
   const handlePhotoChange = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -274,8 +356,8 @@ function App() {
     setIsSaving(true);
     setErrorMessage("");
 
-    const newPhotos: StoredPhoto[] = selectedFiles.map(
-      (file) => ({
+    const newPhotos: StoredPhoto[] =
+      selectedFiles.map((file) => ({
         id: createId(),
         file,
         thumbnail: undefined,
@@ -284,23 +366,28 @@ function App() {
         fileSize: file.size,
         createdAt: new Date().toISOString(),
         status: "pending",
-      })
-    );
+      }));
 
     try {
-      // 必ず先にIndexedDBへ保存
+      /*
+       * 通信状態に関係なく、
+       * 必ず先にIndexedDBへ保存します。
+       */
       await savePhotos(newPhotos);
-
       await loadPhotos();
 
-      // 登録後は未送信タブへ移動
       setActiveTab("pending");
 
-      // 同じファイルを再選択できるように空にする
+      /*
+       * 同じファイルを再選択できるようにします。
+       */
       event.target.value = "";
     } catch (error) {
       console.error(error);
-      setErrorMessage("写真の保存に失敗しました。");
+
+      setErrorMessage(
+        "写真の保存に失敗しました。"
+      );
     } finally {
       setIsSaving(false);
     }
@@ -320,7 +407,10 @@ function App() {
       await loadPhotos();
     } catch (error) {
       console.error(error);
-      setErrorMessage("写真の削除に失敗しました。");
+
+      setErrorMessage(
+        "写真の削除に失敗しました。"
+      );
     }
   };
 
@@ -382,7 +472,9 @@ function App() {
       )}
 
       {errorMessage && (
-        <p className="error-message">{errorMessage}</p>
+        <p className="error-message">
+          {errorMessage}
+        </p>
       )}
 
       <section className="photo-list-section">
@@ -390,9 +482,13 @@ function App() {
           <button
             type="button"
             className={
-              activeTab === "pending" ? "active" : ""
+              activeTab === "pending"
+                ? "active"
+                : ""
             }
-            onClick={() => setActiveTab("pending")}
+            onClick={() =>
+              setActiveTab("pending")
+            }
           >
             未送信 {pendingPhotos.length}件
           </button>
@@ -400,9 +496,13 @@ function App() {
           <button
             type="button"
             className={
-              activeTab === "sent" ? "active" : ""
+              activeTab === "sent"
+                ? "active"
+                : ""
             }
-            onClick={() => setActiveTab("sent")}
+            onClick={() =>
+              setActiveTab("sent")
+            }
           >
             送信済み {sentPhotos.length}件
           </button>
@@ -448,39 +548,13 @@ function App() {
         {activeTab === "sent" &&
           sentPhotos.length > 0 && (
             <p className="history-note">
-              送信済み履歴とサムネイルは7日間保存されます。
+              送信済み履歴とサムネイルは
+              7日間保存されます。
             </p>
           )}
       </section>
-      <label className="token-field">
-        <span>Make Webhook APIキー</span>
-
-        <input
-          type="password"
-          value={makeApiKey}
-          onChange={(event) =>
-            setMakeApiKey(event.target.value)
-          }
-          placeholder="テスト用APIキーを入力"
-          autoComplete="off"
-        />
-
-        <small>
-          APIキーは保存されず、再読み込みすると消えます。
-        </small>
-      </label>
-      <button
-        type="button"
-        className="upload-button"
-        onClick={testMakeWebhookOnly}
-        disabled={pendingPhotos.length === 0}
-      >
-        Make Webhook接続テスト
-      </button>
     </main>
   );
 }
-
-
 
 export default App;
