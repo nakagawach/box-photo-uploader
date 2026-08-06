@@ -7,7 +7,7 @@ export type PhotoStatus =
 export type StoredPhoto = {
   id: string;
 
-  // 未送信時の原寸写真
+  // 未送信時に保持する原寸写真
   file?: Blob;
 
   // 送信済み履歴用のWebPサムネイル
@@ -19,7 +19,6 @@ export type StoredPhoto = {
   createdAt: string;
   status: PhotoStatus;
 
-  // 写真に付ける複数タグ
   tags: string[];
 
   sentAt?: string;

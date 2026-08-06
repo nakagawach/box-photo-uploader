@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+} from "react";
+import type { ChangeEvent } from "react";
 import "./App.css";
 import StoredPhotoCard from "./components/StoredPhotoCard";
+import PhotoViewer from "./components/PhotoViewer";
 import {
   deleteExpiredSentPhotos,
   deletePhoto,
@@ -37,10 +42,10 @@ async function createThumbnail(
   const scale = Math.min(
     1,
     maxSize /
-    Math.max(
-      imageBitmap.width,
-      imageBitmap.height
-    )
+      Math.max(
+        imageBitmap.width,
+        imageBitmap.height
+      )
   );
 
   const width = Math.max(
@@ -70,7 +75,7 @@ async function createThumbnail(
     imageBitmap.close();
 
     throw new Error(
-      "サムネイル用Canvasを作成できませんでした。"
+      "サムネイルを作成できませんでした。"
     );
   }
 
@@ -104,26 +109,49 @@ async function createThumbnail(
   return webpBlob;
 }
 
-function createUploadFileName(
+function sanitizeFileNamePart(
+  value: string
+): string {
+  return value
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, "_");
+}
+
+function createBoxFileName(
   photo: StoredPhoto
 ): string {
-  const createdAt = new Date(photo.createdAt);
+  const createdAt = new Date(
+    photo.createdAt
+  );
 
   const datePart = [
     createdAt.getFullYear(),
-    String(createdAt.getMonth() + 1).padStart(2, "0"),
-    String(createdAt.getDate()).padStart(2, "0"),
+    String(
+      createdAt.getMonth() + 1
+    ).padStart(2, "0"),
+    String(
+      createdAt.getDate()
+    ).padStart(2, "0"),
   ].join("");
 
   const timePart = [
-    String(createdAt.getHours()).padStart(2, "0"),
-    String(createdAt.getMinutes()).padStart(2, "0"),
-    String(createdAt.getSeconds()).padStart(2, "0"),
+    String(
+      createdAt.getHours()
+    ).padStart(2, "0"),
+    String(
+      createdAt.getMinutes()
+    ).padStart(2, "0"),
+    String(
+      createdAt.getSeconds()
+    ).padStart(2, "0"),
   ].join("");
 
   const tagPart =
     (photo.tags ?? []).length > 0
-      ? photo.tags.join("_")
+      ? photo.tags
+          .map(sanitizeFileNamePart)
+          .join("_")
       : "タグなし";
 
   const idPart = photo.id
@@ -131,14 +159,24 @@ function createUploadFileName(
     .slice(0, 8);
 
   const extension =
-    photo.fileName.match(/\.[^.]+$/)?.[0] ?? "";
+    photo.fileName.match(/\.[^.]+$/)?.[0] ??
+    "";
 
-  const originalName = photo.fileName
-    .replace(/\.[^.]+$/, "")
-    .replace(/[\\/:*?"<>|]/g, "_")
-    .slice(0, 40);
+  const originalBaseName =
+    sanitizeFileNamePart(
+      photo.fileName.replace(
+        /\.[^.]+$/,
+        ""
+      )
+    ).slice(0, 40);
 
-  return `${datePart}_${timePart}_${tagPart}_${idPart}_${originalName}${extension}`;
+  return [
+    datePart,
+    timePart,
+    tagPart,
+    idPart,
+    originalBaseName,
+  ].join("_") + extension;
 }
 
 async function uploadPhotoToMake(
@@ -161,12 +199,12 @@ async function uploadPhotoToMake(
     );
   }
 
-  const uploadFileName =
-    createUploadFileName(photo);
+  const boxFileName =
+    createBoxFileName(photo);
 
-  const uploadFile = new File( 
+  const uploadFile = new File(
     [photo.file],
-    uploadFileName,
+    boxFileName,
     {
       type:
         photo.fileType ||
@@ -179,12 +217,24 @@ async function uploadPhotoToMake(
 
   formData.append(
     "file",
-    uploadFile
+    uploadFile,
+    boxFileName
+  );
+
+  // 既存のMake設定との互換用
+  formData.append(
+    "fileName",
+    boxFileName
   );
 
   formData.append(
-    "fileName",
-    uploadFileName
+    "boxFileName",
+    boxFileName
+  );
+
+  formData.append(
+    "originalFileName",
+    photo.fileName
   );
 
   formData.append(
@@ -202,27 +252,49 @@ async function uploadPhotoToMake(
     String(photo.fileSize)
   );
 
-  /*
-   * MakeにはJSON文字列としてタグを送ります。
-   * 例：["境界標","接道"]
-   */
   formData.append(
     "tags",
     JSON.stringify(photo.tags ?? [])
   );
 
-  const response = await fetch(
-    MAKE_WEBHOOK_URL,
-    {
-      method: "POST",
-      body: formData,
-    }
+  const controller =
+    new AbortController();
+
+  const timeoutId = window.setTimeout(
+    () => {
+      controller.abort();
+    },
+    60_000
   );
 
-  if (!response.ok) {
-    throw new Error(
-      `Makeへの送信に失敗しました。HTTP ${response.status}`
+  try {
+    const response = await fetch(
+      MAKE_WEBHOOK_URL,
+      {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      }
     );
+
+    if (!response.ok) {
+      throw new Error(
+        `Makeへの送信に失敗しました。HTTP ${response.status}`
+      );
+    }
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      error.name === "AbortError"
+    ) {
+      throw new Error(
+        "通信が不安定なため送信を中断しました。写真は未送信のまま保存されています。"
+      );
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
@@ -235,6 +307,11 @@ function App() {
 
   const [activeTab, setActiveTab] =
     useState<ActiveTab>("pending");
+
+  const [
+    previewPhotoId,
+    setPreviewPhotoId,
+  ] = useState<string | null>(null);
 
   const [isSaving, setIsSaving] =
     useState(false);
@@ -250,10 +327,6 @@ function App() {
       const savedPhotos =
         await getAllPhotos();
 
-      /*
-       * 過去に保存したデータにtagsがなくても
-       * 動作するように補完します。
-       */
       const normalizedPhotos =
         savedPhotos.map((photo) => ({
           ...photo,
@@ -277,6 +350,11 @@ function App() {
   const sentPhotos = photos.filter(
     (photo) => photo.status === "sent"
   );
+
+  const displayedPhotos =
+    activeTab === "pending"
+      ? pendingPhotos
+      : sentPhotos;
 
   useEffect(() => {
     const initialize = async () => {
@@ -350,9 +428,7 @@ function App() {
         await uploadPhotoToMake(photo);
 
         const thumbnail =
-          await createThumbnail(
-            photo.file
-          );
+          await createThumbnail(photo.file);
 
         const sentPhoto: StoredPhoto = {
           ...photo,
@@ -373,6 +449,7 @@ function App() {
       }
 
       await loadPhotos();
+
       setActiveTab("sent");
 
       alert(
@@ -394,7 +471,7 @@ function App() {
   };
 
   const handlePhotoChange = async (
-    event: React.ChangeEvent<HTMLInputElement>
+    event: ChangeEvent<HTMLInputElement>
   ) => {
     const selectedFiles = Array.from(
       event.target.files ?? []
@@ -456,10 +533,6 @@ function App() {
       tags,
     };
 
-    /*
-     * 先に画面を更新するため、
-     * タップ直後にタグの色が変わります。
-     */
     setPhotos((currentPhotos) =>
       currentPhotos.map((photo) =>
         photo.id === id
@@ -473,10 +546,6 @@ function App() {
     } catch (error) {
       console.error(error);
 
-      /*
-       * 保存失敗時はIndexedDBから
-       * 正しい状態を再読込します。
-       */
       await loadPhotos();
 
       setErrorMessage(
@@ -510,11 +579,6 @@ function App() {
     }
   };
 
-  const displayedPhotos =
-    activeTab === "pending"
-      ? pendingPhotos
-      : sentPhotos;
-
   return (
     <main className="container">
       <h1>📷 Box Photo Uploader</h1>
@@ -535,6 +599,7 @@ function App() {
           : "オフライン：写真はブラウザに保存されます"}
       </div>
 
+      {/* 上部のカメラ・写真選択ボタンも残す */}
       <div className="photo-actions">
         <label className="photo-action-button">
           📷 カメラで撮影
@@ -642,6 +707,9 @@ function App() {
                   onTagsChange={
                     handleTagsChange
                   }
+                  onPreview={
+                    setPreviewPhotoId
+                  }
                 />
               )
             )}
@@ -656,6 +724,39 @@ function App() {
             </p>
           )}
       </section>
+
+      {/* 右下固定カメラボタン */}
+      <label
+        className={
+          isSaving
+            ? "floating-camera-button disabled"
+            : "floating-camera-button"
+        }
+        aria-label="カメラで撮影"
+      >
+        <span aria-hidden="true">
+          📷
+        </span>
+
+        <input
+          className="hidden-file-input"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePhotoChange}
+          disabled={isSaving}
+        />
+      </label>
+
+      {previewPhotoId && (
+        <PhotoViewer
+          photos={displayedPhotos}
+          initialPhotoId={previewPhotoId}
+          onClose={() =>
+            setPreviewPhotoId(null)
+          }
+        />
+      )}
     </main>
   );
 }

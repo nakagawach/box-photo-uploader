@@ -8,6 +8,7 @@ type StoredPhotoCardProps = {
     id: string,
     tags: string[]
   ) => Promise<void>;
+  onPreview: (id: string) => void;
 };
 
 const tagOptions = [
@@ -40,6 +41,7 @@ function StoredPhotoCard({
   photo,
   onDelete,
   onTagsChange,
+  onPreview,
 }: StoredPhotoCardProps) {
   const [previewUrl, setPreviewUrl] =
     useState("");
@@ -48,11 +50,6 @@ function StoredPhotoCard({
     useState(false);
 
   const isSent = photo.status === "sent";
-
-  /*
-   * 過去の保存データにtagsがない場合も
-   * エラーにならないようにします。
-   */
   const currentTags = photo.tags ?? [];
 
   useEffect(() => {
@@ -86,9 +83,9 @@ function StoredPhotoCard({
 
     const nextTags = isSelected
       ? currentTags.filter(
-        (currentTag) =>
-          currentTag !== tag
-      )
+          (currentTag) =>
+            currentTag !== tag
+        )
       : [...currentTags, tag];
 
     try {
@@ -105,16 +102,28 @@ function StoredPhotoCard({
 
   return (
     <article className="photo-card">
-      {/* 写真 */}
       {previewUrl && (
-        <img
-          className="preview-image"
-          src={previewUrl}
-          alt={photo.fileName}
-        />
+        <button
+          type="button"
+          className="preview-image-button"
+          onClick={() =>
+            onPreview(photo.id)
+          }
+          aria-label={`${photo.fileName}を全画面表示`}
+        >
+          <img
+            className="preview-image"
+            src={previewUrl}
+            alt={photo.fileName}
+          />
+
+          <span className="preview-hint">
+            タップして拡大
+          </span>
+        </button>
       )}
 
-      {/* 写真の直下にタグを表示 */}
+      {/* 写真の直下にタグを配置 */}
       <div className="tag-section">
         <p className="tag-label">
           {isSent
@@ -169,7 +178,6 @@ function StoredPhotoCard({
           ))}
       </div>
 
-      {/* ファイル情報 */}
       <div className="photo-information">
         <p className="file-name">
           {photo.fileName}
@@ -224,9 +232,7 @@ function StoredPhotoCard({
             ●
           </span>
 
-          {isSent
-            ? "送信済み"
-            : "未送信"}
+          {isSent ? "送信済み" : "未送信"}
         </p>
 
         {!isSent && previewUrl && (
