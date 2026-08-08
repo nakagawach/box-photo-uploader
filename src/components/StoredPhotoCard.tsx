@@ -1,14 +1,24 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+} from "react";
 import type { StoredPhoto } from "../types/Photo";
 
 type StoredPhotoCardProps = {
   photo: StoredPhoto;
-  onDelete: (id: string) => void;
+
+  onDelete: (
+    id: string
+  ) => void;
+
   onTagsChange: (
     id: string,
     tags: string[]
   ) => Promise<void>;
-  onPreview: (id: string) => void;
+
+  onPreview: (
+    id: string
+  ) => void;
 };
 
 const tagOptions = [
@@ -25,7 +35,9 @@ const tagOptions = [
 function formatDateTime(
   dateText: string
 ): string {
-  return new Date(dateText).toLocaleString(
+  return new Date(
+    dateText
+  ).toLocaleString(
     "ja-JP",
     {
       year: "numeric",
@@ -43,18 +55,26 @@ function StoredPhotoCard({
   onTagsChange,
   onPreview,
 }: StoredPhotoCardProps) {
-  const [previewUrl, setPreviewUrl] =
-    useState("");
+  const [
+    previewUrl,
+    setPreviewUrl,
+  ] = useState("");
 
-  const [isUpdatingTags, setIsUpdatingTags] =
-    useState(false);
+  const [
+    isUpdatingTags,
+    setIsUpdatingTags,
+  ] = useState(false);
 
-  const isSent = photo.status === "sent";
-  const currentTags = photo.tags ?? [];
+  const isSent =
+    photo.status === "sent";
+
+  const currentTags =
+    photo.tags ?? [];
 
   useEffect(() => {
     const previewBlob =
-      photo.file ?? photo.thumbnail;
+      photo.file ??
+      photo.thumbnail;
 
     if (!previewBlob) {
       setPreviewUrl("");
@@ -62,43 +82,73 @@ function StoredPhotoCard({
     }
 
     const objectUrl =
-      URL.createObjectURL(previewBlob);
+      URL.createObjectURL(
+        previewBlob
+      );
 
-    setPreviewUrl(objectUrl);
+    setPreviewUrl(
+      objectUrl
+    );
 
     return () => {
-      URL.revokeObjectURL(objectUrl);
-    };
-  }, [photo.file, photo.thumbnail]);
-
-  const handleTagClick = async (
-    tag: string
-  ) => {
-    if (isSent || isUpdatingTags) {
-      return;
-    }
-
-    const isSelected =
-      currentTags.includes(tag);
-
-    const nextTags = isSelected
-      ? currentTags.filter(
-          (currentTag) =>
-            currentTag !== tag
-        )
-      : [...currentTags, tag];
-
-    try {
-      setIsUpdatingTags(true);
-
-      await onTagsChange(
-        photo.id,
-        nextTags
+      URL.revokeObjectURL(
+        objectUrl
       );
-    } finally {
-      setIsUpdatingTags(false);
-    }
-  };
+    };
+  }, [
+    photo.file,
+    photo.thumbnail,
+  ]);
+
+  const handleTagClick =
+    async (
+      tag: string
+    ) => {
+      if (
+        isSent ||
+        isUpdatingTags
+      ) {
+        return;
+      }
+
+      const selected =
+        currentTags.includes(
+          tag
+        );
+
+      const nextTags =
+        selected
+          ? currentTags.filter(
+              (currentTag) =>
+                currentTag !==
+                tag
+            )
+          : [
+              ...currentTags,
+              tag,
+            ];
+
+      try {
+        setIsUpdatingTags(
+          true
+        );
+
+        await onTagsChange(
+          photo.id,
+          nextTags
+        );
+      } finally {
+        setIsUpdatingTags(
+          false
+        );
+      }
+    };
+
+  const displayFileName =
+    isSent
+      ? photo.uploadedFileName ??
+        photo.fileName
+      : photo.fileName;
 
   return (
     <article className="photo-card">
@@ -107,80 +157,104 @@ function StoredPhotoCard({
           type="button"
           className="preview-image-button"
           onClick={() =>
-            onPreview(photo.id)
+            onPreview(
+              photo.id
+            )
           }
-          aria-label={`${photo.fileName}を全画面表示`}
         >
           <img
             className="preview-image"
-            src={previewUrl}
-            alt={photo.fileName}
+            src={
+              previewUrl
+            }
+            alt={
+              displayFileName
+            }
           />
 
           <span className="preview-hint">
-            タップして拡大
+            ⛶ 拡大
           </span>
         </button>
       )}
 
-      {/* 写真の直下にタグを配置 */}
       <div className="tag-section">
         <p className="tag-label">
           {isSent
-            ? "送信した写真タグ"
+            ? "写真タグ"
             : "写真タグを選択"}
         </p>
 
         {!isSent && (
           <div className="tag-list">
-            {tagOptions.map((tag) => {
-              const isSelected =
-                currentTags.includes(tag);
+            {tagOptions.map(
+              (tag) => {
+                const selected =
+                  currentTags.includes(
+                    tag
+                  );
 
-              return (
-                <button
-                  key={tag}
-                  type="button"
-                  className={
-                    isSelected
-                      ? "tag-button selected"
-                      : "tag-button"
-                  }
-                  disabled={isUpdatingTags}
-                  onClick={() =>
-                    void handleTagClick(tag)
-                  }
-                >
-                  {tag}
-                  {isSelected ? " ✓" : ""}
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    key={
+                      tag
+                    }
+                    type="button"
+                    disabled={
+                      isUpdatingTags
+                    }
+                    className={
+                      selected
+                        ? "tag-button selected"
+                        : "tag-button"
+                    }
+                    onClick={() =>
+                      void handleTagClick(
+                        tag
+                      )
+                    }
+                  >
+                    {tag}
+
+                    {selected
+                      ? " ✓"
+                      : ""}
+                  </button>
+                );
+              }
+            )}
           </div>
         )}
 
         {isSent &&
-          (currentTags.length === 0 ? (
+          (currentTags.length >
+          0 ? (
+            <div className="selected-tag-list">
+              {currentTags.map(
+                (tag) => (
+                  <span
+                    key={
+                      tag
+                    }
+                    className="selected-tag"
+                  >
+                    {
+                      tag
+                    }
+                  </span>
+                )
+              )}
+            </div>
+          ) : (
             <p className="no-tag-message">
               タグなし
             </p>
-          ) : (
-            <div className="selected-tag-list">
-              {currentTags.map((tag) => (
-                <span
-                  key={tag}
-                  className="selected-tag"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
           ))}
       </div>
 
       <div className="photo-information">
         <p className="file-name">
-          {photo.fileName}
+          {displayFileName}
         </p>
 
         {!isSent && (
@@ -191,7 +265,9 @@ function StoredPhotoCard({
                 photo.fileSize /
                 1024 /
                 1024
-              ).toFixed(2)}
+              ).toFixed(
+                2
+              )}
               {" MB"}
             </p>
 
@@ -204,22 +280,15 @@ function StoredPhotoCard({
           </>
         )}
 
-        {isSent && (
-          <>
-            {photo.sentAt && (
-              <p>
-                送信日時：
-                {formatDateTime(
-                  photo.sentAt
-                )}
-              </p>
-            )}
-
-            <p className="history-description">
-              Box送信済み・履歴は7日間保存
+        {isSent &&
+          photo.sentAt && (
+            <p>
+              送信日時：
+              {formatDateTime(
+                photo.sentAt
+              )}
             </p>
-          </>
-        )}
+          )}
 
         <p
           className={
@@ -232,24 +301,34 @@ function StoredPhotoCard({
             ●
           </span>
 
-          {isSent ? "送信済み" : "未送信"}
+          {isSent
+            ? "送信済み"
+            : "未送信"}
         </p>
 
-        {!isSent && previewUrl && (
-          <a
-            href={previewUrl}
-            download={photo.fileName}
-            className="download-button"
-          >
-            ⬇ 端末へ保存
-          </a>
-        )}
+        {!isSent &&
+          previewUrl && (
+            <a
+              className="download-button"
+              href={
+                previewUrl
+              }
+              download={
+                photo.fileName
+              }
+            >
+              ⬇
+              端末へ保存
+            </a>
+          )}
 
         <button
           type="button"
           className="delete-button"
           onClick={() =>
-            onDelete(photo.id)
+            onDelete(
+              photo.id
+            )
           }
         >
           {isSent
