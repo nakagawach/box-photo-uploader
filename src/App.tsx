@@ -212,11 +212,7 @@ async function uploadPhotoToMake(
     );
   }
 
-  if (
-    !MAKE_WEBHOOK_URL ||
-    MAKE_WEBHOOK_URL ===
-      "YOUR_MAKE_WEBHOOK_URL"
-  ) {
+  if (!MAKE_WEBHOOK_URL) {
     throw new Error(
       "Make Webhook URLをApp.tsxへ設定してください。"
     );
