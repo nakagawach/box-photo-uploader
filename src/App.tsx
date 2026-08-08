@@ -215,7 +215,7 @@ async function uploadPhotoToMake(
   if (
     !MAKE_WEBHOOK_URL ||
     MAKE_WEBHOOK_URL ===
-      "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467vL"
+      "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v"
   ) {
     throw new Error(
       "Make Webhook URLをApp.tsxへ設定してください。"
