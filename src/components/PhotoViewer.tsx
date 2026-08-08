@@ -25,7 +25,8 @@ type GestureMode =
   | "swipe"
   | "close"
   | "pan"
-  | "pinch";
+  | "pinch"
+  | "doubletap";
 
 type Point = {
   x: number;
@@ -163,6 +164,20 @@ function PhotoViewer({
       x: 0,
       y: 0,
     });
+
+  /*
+   * Android Chromeなどでカスタムのダブルタップ処理後に
+   * synthetic dblclick が発火する場合があるため抑止します。
+   */
+  const ignoreSyntheticDoubleClickUntilRef =
+    useRef(0);
+
+  /*
+   * 2回目のタップをpointerdown時点で確定した場合、
+   * そのpointerupを通常タップとして再処理しないためのID。
+   */
+  const consumedDoubleTapPointerIdRef =
+    useRef<number | null>(null);
 
   const slideDirectionRef =
     useRef<
@@ -901,6 +916,103 @@ function PhotoViewer({
       syncClose(0);
     };
 
+  /*
+   * ダブルタップは2回目のpointerdownで判定します。
+   * これにより2回目のわずかな指ブレが横スワイプ判定へ入る前に
+   * 拡大処理へ確定でき、隣の写真が一瞬見える現象を防ぎます。
+   */
+  const tryBeginDoubleTap =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      if (
+        event.pointerType !==
+        "touch" ||
+        scaleRef.current >
+          1.01
+      ) {
+        return false;
+      }
+
+      const now =
+        performance.now();
+
+      const previous =
+        lastTapRef.current;
+
+      const sameArea =
+        previous.time > 0 &&
+        Math.hypot(
+          event.clientX -
+            previous.x,
+
+          event.clientY -
+            previous.y
+        ) <=
+        DOUBLE_TAP_DISTANCE;
+
+      const withinTime =
+        previous.time > 0 &&
+        now -
+          previous.time <=
+          DOUBLE_TAP_MS;
+
+      if (
+        !sameArea ||
+        !withinTime
+      ) {
+        return false;
+      }
+
+      /*
+       * 2回目を消費したのでタップ履歴を即リセット。
+       */
+      lastTapRef.current = {
+        time: 0,
+        x: 0,
+        y: 0,
+      };
+
+      consumedDoubleTapPointerIdRef.current =
+        event.pointerId;
+
+      gestureModeRef.current =
+        "doubletap";
+
+      /*
+       * 写真スワイプの途中状態があっても完全に中央へ戻してから拡大。
+       */
+      slideDirectionRef.current =
+        null;
+
+      setTrackAnimating(
+        false
+      );
+
+      syncTrack(0);
+
+      setCloseAnimating(
+        false
+      );
+
+      syncClose(0);
+
+      zoomAt(
+        event.clientX,
+        event.clientY,
+        DOUBLE_TAP_SCALE
+      );
+
+      /*
+       * 直後にブラウザがdblclickを生成しても二重処理しない。
+       */
+      ignoreSyntheticDoubleClickUntilRef.current =
+        now + 700;
+
+      return true;
+    };
+
   const handlePointerDown =
     (
       event:
@@ -911,6 +1023,34 @@ function PhotoViewer({
           "mouse" &&
         event.button !== 0
       ) {
+        return;
+      }
+
+      /*
+       * 2回目のタップは、スワイプ判定へ入る前にここで確定。
+       */
+      if (
+        tryBeginDoubleTap(
+          event
+        )
+      ) {
+        try {
+          event.currentTarget
+            .setPointerCapture(
+              event.pointerId
+            );
+        } catch {
+          // capture不可でも問題なし
+        }
+
+        activePointersRef.current.set(
+          event.pointerId,
+          {
+            x: event.clientX,
+            y: event.clientY,
+          }
+        );
+
         return;
       }
 
@@ -1156,95 +1296,41 @@ function PhotoViewer({
       );
     };
 
-  const handleDoubleTap =
+  /*
+   * pointerup側では「1回目のタップ」を記録するだけ。
+   * 2回目の判定はpointerdown側で行います。
+   */
+  const rememberSingleTap =
     (
       event:
         ReactPointerEvent<HTMLDivElement>
     ) => {
       if (
         event.pointerType !==
-        "touch"
-      ) {
-        return false;
-      }
-
-      if (
+        "touch" ||
         !isTapGesture(
           event
         )
       ) {
-        /*
-         * 少しでも大きく動かした操作は
-         * タップ履歴をリセット。
-         */
         lastTapRef.current = {
           time: 0,
           x: 0,
           y: 0,
         };
 
-        return false;
-      }
-
-      const now =
-        performance.now();
-
-      const previous =
-        lastTapRef.current;
-
-      const sameArea =
-        Math.hypot(
-          event.clientX -
-            previous.x,
-
-          event.clientY -
-            previous.y
-        ) <=
-        DOUBLE_TAP_DISTANCE;
-
-      const isDouble =
-        previous.time > 0 &&
-        now -
-          previous.time <=
-          DOUBLE_TAP_MS &&
-        sameArea;
-
-      if (
-        isDouble
-      ) {
-        /*
-         * ★2回目で即発火し、
-         * その後の3回目が別のダブル判定にならないようリセット。
-         */
-        lastTapRef.current = {
-          time: 0,
-          x: 0,
-          y: 0,
-        };
-
-        if (
-          scaleRef.current <=
-          1.01
-        ) {
-          zoomAt(
-            event.clientX,
-            event.clientY,
-            DOUBLE_TAP_SCALE
-          );
-        } else {
-          resetZoom();
-        }
-
-        return true;
+        return;
       }
 
       lastTapRef.current = {
-        time: now,
-        x: event.clientX,
-        y: event.clientY,
-      };
+        time:
+          performance.now(),
 
-      return false;
+        x:
+          event.clientX,
+
+        y:
+          event.clientY,
+      };
     };
 
   const finishPointer =
@@ -1310,16 +1396,25 @@ function PhotoViewer({
         null;
 
       if (
-        mode ===
-        "pending" &&
-        handleDoubleTap(
-          event
-        )
+        consumedDoubleTapPointerIdRef.current ===
+        event.pointerId
       ) {
+        consumedDoubleTapPointerIdRef.current =
+          null;
+
         gestureModeRef.current =
           "none";
 
         return;
+      }
+
+      if (
+        mode ===
+        "pending"
+      ) {
+        rememberSingleTap(
+          event
+        );
       }
 
       if (
@@ -1396,6 +1491,13 @@ function PhotoViewer({
       event:
         ReactMouseEvent<HTMLImageElement>
     ) => {
+      if (
+        performance.now() <
+        ignoreSyntheticDoubleClickUntilRef.current
+      ) {
+        return;
+      }
+
       if (
         scaleRef.current <=
         1.01

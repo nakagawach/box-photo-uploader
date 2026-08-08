@@ -417,6 +417,16 @@ function App() {
   ] =
     useState("");
 
+  /*
+   * タブ切替直後の誤ったスクロール位置を1フレームでも見せないため、
+   * 復元完了まで一覧だけ非表示にします。
+   */
+  const [
+    isRestoringScroll,
+    setIsRestoringScroll,
+  ] =
+    useState(false);
+
   const tabTouchStartX =
     useRef<
       number | null
@@ -646,7 +656,7 @@ function App() {
     };
 
   const restoreScrollMemory =
-    (
+    async (
       tab:
         ActiveTab
     ) => {
@@ -655,74 +665,135 @@ function App() {
           tab
         ];
 
-      const restore =
-        () => {
-          const stickyBottom =
-            document
-              .querySelector(
-                ".sticky-tab-area"
+      /*
+       * 新しいタブの画像レイアウトが確定する前にスクロールすると、
+       * Androidでは一瞬だけ別位置が描画されることがあります。
+       *
+       * 一覧を非表示のまま、画像decodeまたは短いタイムアウトを待ち、
+       * アンカー位置を復元してから表示します。
+       */
+      await new Promise<void>(
+        (resolve) => {
+          requestAnimationFrame(
+            () =>
+              requestAnimationFrame(
+                () => resolve()
               )
-              ?.getBoundingClientRect()
-              .bottom ??
-            0;
+          );
+        }
+      );
 
-          if (
-            memory.anchorId
-          ) {
-            const anchor =
-              document.querySelector<
-                HTMLElement
-              >(
-                `[data-tab="${tab}"] [data-photo-id="${CSS.escape(memory.anchorId)}"]`
-              );
+      const images =
+        Array.from(
+          document.querySelectorAll<
+            HTMLImageElement
+          >(
+            `[data-tab="${tab}"] img`
+          )
+        );
 
-            if (anchor) {
-              const currentOffset =
-                anchor
-                  .getBoundingClientRect()
-                  .top -
-                stickyBottom;
+      const decodePromise =
+        Promise.all(
+          images.map(
+            async (image) => {
+              if (
+                image.complete &&
+                image.naturalWidth >
+                  0
+              ) {
+                return;
+              }
 
-              window.scrollBy({
-                top:
-                  currentOffset -
-                  memory.anchorOffset,
-
-                behavior:
-                  "auto",
-              });
-
-              return;
+              try {
+                await image.decode();
+              } catch {
+                // decode非対応/失敗でも続行
+              }
             }
-          }
+          )
+        );
 
-          window.scrollTo({
+      /*
+       * 画像が多くても長時間真っ白にならないよう上限を設定。
+       */
+      await Promise.race([
+        decodePromise,
+        new Promise<void>(
+          (resolve) => {
+            window.setTimeout(
+              resolve,
+              220
+            );
+          }
+        ),
+      ]);
+
+      const stickyBottom =
+        document
+          .querySelector(
+            ".sticky-tab-area"
+          )
+          ?.getBoundingClientRect()
+          .bottom ??
+        0;
+
+      let restored =
+        false;
+
+      if (
+        memory.anchorId
+      ) {
+        const anchor =
+          document.querySelector<
+            HTMLElement
+          >(
+            `[data-tab="${tab}"] [data-photo-id="${CSS.escape(memory.anchorId)}"]`
+          );
+
+        if (anchor) {
+          const currentOffset =
+            anchor
+              .getBoundingClientRect()
+              .top -
+            stickyBottom;
+
+          window.scrollBy({
             top:
-              memory.scrollY,
+              currentOffset -
+              memory.anchorOffset,
 
             behavior:
               "auto",
           });
-        };
+
+          restored =
+            true;
+        }
+      }
+
+      if (!restored) {
+        window.scrollTo({
+          top:
+            memory.scrollY,
+
+          behavior:
+            "auto",
+        });
+      }
 
       /*
-       * 1回だけではAndroidで画像レイアウト確定前の場合があるので、
-       * 数回だけ同じアンカーへ補正します。
+       * 復元後の次フレームで表示。
        */
-      requestAnimationFrame(
-        () => {
-          restore();
-
-          window.setTimeout(
-            restore,
-            60
-          );
-
-          window.setTimeout(
-            restore,
-            180
+      await new Promise<void>(
+        (resolve) => {
+          requestAnimationFrame(
+            () => resolve()
           );
         }
+      );
+
+      setIsRestoringScroll(
+        false
       );
     };
 
@@ -737,7 +808,7 @@ function App() {
     restoreTabRef.current =
       null;
 
-    restoreScrollMemory(
+    void restoreScrollMemory(
       activeTab
     );
   }, [
@@ -759,6 +830,10 @@ function App() {
 
       saveScrollMemory(
         activeTab
+      );
+
+      setIsRestoringScroll(
+        true
       );
 
       restoreTabRef.current =
@@ -1270,7 +1345,11 @@ function App() {
       </div>
 
       <div
-        className="swipe-page"
+        className={
+          isRestoringScroll
+            ? "swipe-page restoring-scroll"
+            : "swipe-page"
+        }
         data-tab={
           activeTab
         }

@@ -290,6 +290,14 @@ h1 {
   touch-action: pan-y;
 }
 
+/*
+ * タブ切替時は、正しいスクロール位置を復元するまで一覧だけ隠します。
+ * 「一瞬違う位置が見えてから正しい位置へ飛ぶ」現象を防止します。
+ */
+.swipe-page.restoring-scroll {
+  visibility: hidden;
+}
+
 .upload-button {
   width: 100%;
 
