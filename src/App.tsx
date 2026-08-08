@@ -599,50 +599,25 @@ function App() {
         activeTab
       ];
 
-    const restore =
-      () => {
-        window.scrollTo({
-          top:
-            targetY,
-          behavior:
-            "auto",
-        });
-
-        /*
-         * Android Chromeでは横スワイプ直後に
-         * sticky要素の計算が1フレーム遅れることがあります。
-         * タブ上端が画面外へ潜った場合だけ補正。
-         */
-        const correction =
-          getStickyTopSafeY();
-
-        if (
-          correction >
-          0
-        ) {
-          window.scrollBy({
-            top:
-              -correction,
-            behavior:
-              "auto",
-          });
-        }
-      };
-
-    restore();
+    /*
+     * stickyの位置はブラウザへ完全に任せます。
+     * Android Chrome/PWAの可変ブラウザUIと競合するため、
+     * getBoundingClientRect / scrollByによる手動補正はしません。
+     */
+    window.scrollTo({
+      top: targetY,
+      behavior: "auto",
+    });
 
     requestAnimationFrame(
       () => {
-        restore();
+        window.scrollTo({
+          top: targetY,
+          behavior: "auto",
+        });
 
-        requestAnimationFrame(
-          () => {
-            restore();
-
-            setIsRestoringScroll(
-              false
-            );
-          }
+        setIsRestoringScroll(
+          false
         );
       }
     );
@@ -1167,12 +1142,7 @@ function App() {
        * ここだけsticky。
        * タイトルや撮影ボタンは普通に上へ消えます。
        */}
-      <div
-        ref={
-          stickyTabRef
-        }
-        className="sticky-tab-area"
-      >
+      <div className="sticky-tab-area">
         <div className="photo-tabs">
           <button
             type="button"

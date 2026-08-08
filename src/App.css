@@ -232,12 +232,6 @@ h1 {
 
   z-index: 100;
 
-  /*
-   * Android Chromeでsticky上端が描画境界へ潜るのを抑える。
-   */
-  transform: translateZ(0);
-  backface-visibility: hidden;
-
   padding:
     8px
     0;
