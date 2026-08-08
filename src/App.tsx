@@ -38,7 +38,7 @@ type ActiveTab =
   | "sent";
 
 const MAKE_WEBHOOK_URL =
-  "YOUR_CURRENT_MAKE_WEBHOOK_URL";
+  "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v";
 
 function createId(): string {
   if (
