@@ -367,6 +367,16 @@ function App() {
   ] =
     useState(false);
 
+  /*
+   * 写真データを消さずにカードだけ再マウントし、
+   * Blob Object URLを作り直すためのキー。
+   */
+  const [
+    refreshKey,
+    setRefreshKey,
+  ] =
+    useState(0);
+
   const [
     isRestoringScroll,
     setIsRestoringScroll,
@@ -383,18 +393,6 @@ function App() {
       pending: 0,
       sent: 0,
     });
-
-  /*
-   * Androidではstate更新とscrollイベントのタイミングがずれることがあるため、
-   * 判定用にはrefも併用します。
-   */
-  const activeTabRef =
-    useRef<ActiveTab>(
-      "pending"
-    );
-
-  const restoringScrollRef =
-    useRef(false);
 
   const restoreTabRef =
     useRef<ActiveTab | null>(
@@ -472,11 +470,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    activeTabRef.current =
-      activeTab;
-  }, [activeTab]);
-
-  useEffect(() => {
     const online =
       () => {
         setIsOnline(true);
@@ -511,47 +504,16 @@ function App() {
   }, []);
 
   /*
-   * 現在のタブのスクロール位置を記憶。
-   * Androidで切替中のscrollイベントが前タブの保存値を上書きしないよう、
-   * restoringScrollRefで同期的にロックします。
-   */
-  useEffect(() => {
-    const remember =
-      () => {
-        if (
-          restoringScrollRef.current
-        ) {
-          return;
-        }
-
-        scrollMemory.current[
-          activeTabRef.current
-        ] =
-          window.scrollY;
-      };
-
-    window.addEventListener(
-      "scroll",
-      remember,
-      {
-        passive: true,
-      }
-    );
-
-    return () => {
-      window.removeEventListener(
-        "scroll",
-        remember
-      );
-    };
-  }, []);
-
-  /*
-   * タブ切替後、一覧を隠したまま保存位置へ復元します。
+   * タブ切替後のスクロール復元。
    *
-   * Androidでは画像の高さ確定前にscrollToすると、
-   * その時点の最大スクロール量へ丸められてしまうことがあります。
-   * そのため画像decode後にも再度同じ位置へ補正します。
+   * 以前はscrollイベント監視や複数回の補正を入れていましたが、
+   * Androidではそれ自体が保存値を上書きする原因になり得ました。
+   *
+   * 今回は、
+   *   1. タブを離れる瞬間だけscrollYを保存
+   *   2. 新タブの写真imgがDOMに出るまで待つ
+   *   3. decode後に1回だけ復元
+   * としています。
    */
   useLayoutEffect(() => {
     if (
@@ -564,52 +526,71 @@ function App() {
     restoreTabRef.current =
       null;
 
+    let cancelled = false;
+
     const targetY =
       scrollMemory.current[
         activeTab
       ];
 
-    let cancelled =
-      false;
+    const expectedImages =
+      activeTab === "pending"
+        ? pendingPhotos.length
+        : sentPhotos.length;
+
+    const waitForImagesInDom =
+      async () => {
+        const startedAt =
+          performance.now();
+
+        while (
+          !cancelled &&
+          expectedImages > 0
+        ) {
+          const images =
+            document.querySelectorAll(
+              ".swipe-page .preview-image"
+            );
+
+          if (
+            images.length >=
+            expectedImages
+          ) {
+            break;
+          }
+
+          if (
+            performance.now() -
+              startedAt >
+            1000
+          ) {
+            break;
+          }
+
+          await new Promise<void>(
+            (resolve) => {
+              requestAnimationFrame(
+                () => resolve()
+              );
+            }
+          );
+        }
+      };
 
     const restore =
-      () => {
+      async () => {
+        await waitForImagesInDom();
+
         if (cancelled) {
           return;
         }
 
-        window.scrollTo({
-          top: targetY,
-          behavior: "auto",
-        });
-      };
-
-    const finish =
-      async () => {
-        restore();
-
-        await new Promise<void>(
-          (resolve) => {
-            requestAnimationFrame(
-              () =>
-                requestAnimationFrame(
-                  () => resolve()
-                )
-            );
-          }
-        );
-
-        restore();
-
-        /*
-         * 表示中一覧の画像が読み込まれて高さが確定するのを待つ。
-         */
         const images =
           Array.from(
             document.querySelectorAll<
               HTMLImageElement
             >(
-              ".swipe-page img"
+              ".swipe-page .preview-image"
             )
           );
 
@@ -627,7 +608,7 @@ function App() {
                 try {
                   await image.decode();
                 } catch {
-                  // decode失敗でも続行
+                  // 読み込み失敗でも復元処理は続行
                 }
               }
             )
@@ -636,76 +617,71 @@ function App() {
             (resolve) => {
               window.setTimeout(
                 resolve,
-                350
+                700
               );
             }
           ),
         ]);
 
-        restore();
+        if (cancelled) {
+          return;
+        }
 
-        await new Promise<void>(
-          (resolve) => {
-            requestAnimationFrame(
-              () => resolve()
+        window.scrollTo({
+          top: targetY,
+          behavior: "auto",
+        });
+
+        requestAnimationFrame(
+          () => {
+            if (cancelled) {
+              return;
+            }
+
+            setIsRestoringScroll(
+              false
             );
           }
         );
-
-        restore();
-
-        if (!cancelled) {
-          restoringScrollRef.current =
-            false;
-
-          setIsRestoringScroll(
-            false
-          );
-        }
       };
 
-      void finish();
+    void restore();
 
-      return () => {
-        cancelled = true;
-      };
-  }, [activeTab]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTab,
+    pendingPhotos.length,
+    sentPhotos.length,
+  ]);
 
   const switchTab =
     (
       nextTab:
         ActiveTab
     ) => {
-      const currentTab =
-        activeTabRef.current;
-
       if (
         nextTab ===
-        currentTab
+        activeTab
       ) {
         return;
       }
 
       /*
-       * state更新より先に同期的に保存・ロック。
-       * これでAndroidの途中scrollイベントに上書きされません。
+       * 離れる瞬間だけ保存。
+       * scrollイベント監視はしません。
        */
       scrollMemory.current[
-        currentTab
+        activeTab
       ] =
         window.scrollY;
-
-      restoringScrollRef.current =
-        true;
 
       setIsRestoringScroll(
         true
       );
 
       restoreTabRef.current =
-        nextTab;
-
-      activeTabRef.current =
         nextTab;
 
       setActiveTab(
@@ -729,69 +705,33 @@ function App() {
         );
 
         /*
-         * ① まずPWAの最新版を確認。
-         *
-         * 新しいService Workerが見つかった場合は、
-         * vite-plugin-pwaのautoUpdateにより
-         * 新版へ切り替わり、ページが再読込される場合があります。
+         * 現在位置を保持したままPWA更新確認。
          */
-        const pwaUpdateFound =
-          await checkForPwaUpdate();
+        scrollMemory.current[
+          activeTab
+        ] =
+          window.scrollY;
+
+        await checkForPwaUpdate();
 
         /*
-         * ② PWA更新が無い場合でも、
-         * IndexedDBから写真一覧を読み直します。
-         *
-         * 一度カードをアンマウントすることで
-         * BlobのObject URLも作り直します。
+         * IndexedDBを再読込。
+         * photos=[]にはしないためページ高が一瞬縮みません。
          */
-        setPhotos([]);
-
-        await new Promise<void>(
-          (resolve) => {
-            requestAnimationFrame(
-              () => resolve()
-            );
-          }
-        );
-
         await loadPhotos();
 
-        if (
-          pwaUpdateFound
-        ) {
-          console.log(
-            "新しいPWAを検出しました。更新を適用します。"
-          );
-        }
+        /*
+         * StoredPhotoCardだけ再マウントして
+         * Object URLを作り直します。
+         */
+        setRefreshKey(
+          (current) =>
+            current + 1
+        );
       } catch (error) {
         console.error(
           error
         );
-
-        /*
-         * PWA更新確認に失敗しても、
-         * 写真一覧の再読み込みは試します。
-         */
-        try {
-          setPhotos([]);
-
-          await new Promise<void>(
-            (resolve) => {
-              requestAnimationFrame(
-                () => resolve()
-              );
-            }
-          );
-
-          await loadPhotos();
-        } catch (
-          reloadError
-        ) {
-          console.error(
-            reloadError
-          );
-        }
 
         setErrorMessage(
           "更新処理に失敗しました。通信状態を確認してください。"
@@ -863,47 +803,31 @@ function App() {
         await loadPhotos();
 
         /*
-         * 新しく撮影/選択した写真を保存したら、
-         * 未送信画面は必ず一番上から表示します。
+         * 撮影/選択して未送信へ保存したときは、
+         * 未送信画面を必ず一番上から表示。
          */
         scrollMemory.current.pending =
           0;
 
         if (
-          activeTabRef.current !==
+          activeTab !==
           "pending"
         ) {
-          switchTab(
-            "pending"
-          );
-        } else {
-          restoringScrollRef.current =
-            true;
-
           setIsRestoringScroll(
             true
           );
 
+          restoreTabRef.current =
+            "pending";
+
+          setActiveTab(
+            "pending"
+          );
+        } else {
           window.scrollTo({
             top: 0,
             behavior: "auto",
           });
-
-          requestAnimationFrame(
-            () => {
-              window.scrollTo({
-                top: 0,
-                behavior: "auto",
-              });
-
-              restoringScrollRef.current =
-                false;
-
-              setIsRestoringScroll(
-                false
-              );
-            }
-          );
         }
       } catch (error) {
         console.error(error);
@@ -1267,7 +1191,7 @@ function App() {
               (photo) => (
                 <StoredPhotoCard
                   key={
-                    photo.id
+                    `${refreshKey}-${photo.id}`
                   }
                   photo={
                     photo

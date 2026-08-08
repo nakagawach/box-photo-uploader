@@ -388,6 +388,12 @@ h1 {
 .preview-image-button {
   position: relative;
 
+  /*
+   * Blob URLが作られるまでカード高が0へ潰れないようにし、
+   * Androidのスクロール復元を安定させます。
+   */
+  min-height: 180px;
+
   display: block;
 
   width: 100%;
