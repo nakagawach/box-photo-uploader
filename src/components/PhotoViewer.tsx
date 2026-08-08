@@ -27,7 +27,7 @@ type GestureMode =
   | "pan"
   | "pinch";
 
-type PointerPoint = {
+type Point = {
   x: number;
   y: number;
 };
@@ -36,50 +36,14 @@ const MIN_SCALE = 1;
 const MAX_SCALE = 5;
 const DOUBLE_TAP_SCALE = 2.5;
 
-const SWIPE_THRESHOLD = 60;
+const GESTURE_LOCK = 14;
+const SWIPE_THRESHOLD = 56;
 const CLOSE_THRESHOLD = 90;
-const MOVE_LOCK_THRESHOLD = 8;
+const DOUBLE_TAP_MS = 360;
+const DOUBLE_TAP_DISTANCE = 44;
 
-const SLIDE_DURATION = 260;
+const SLIDE_DURATION = 280;
 const CLOSE_DURATION = 180;
-
-function getPhotoBlob(
-  photo: StoredPhoto | undefined
-): Blob | undefined {
-  return photo?.file ?? photo?.thumbnail;
-}
-
-function usePhotoUrl(
-  photo: StoredPhoto | undefined
-): string {
-  const [url, setUrl] = useState("");
-
-  useEffect(() => {
-    const blob = getPhotoBlob(photo);
-
-    if (!blob) {
-      setUrl("");
-      return;
-    }
-
-    const nextUrl = URL.createObjectURL(blob);
-    setUrl(nextUrl);
-
-    return () => {
-      URL.revokeObjectURL(nextUrl);
-    };
-  }, [photo]);
-
-  return url;
-}
-
-function getDisplayName(photo: StoredPhoto): string {
-  if (photo.status === "sent") {
-    return photo.uploadedFileName ?? photo.fileName;
-  }
-
-  return photo.fileName;
-}
 
 function clamp(
   value: number,
@@ -87,6 +51,20 @@ function clamp(
   max: number
 ): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function getPhotoBlob(
+  photo: StoredPhoto | undefined
+): Blob | undefined {
+  return photo?.file ?? photo?.thumbnail;
+}
+
+function getDisplayName(
+  photo: StoredPhoto
+): string {
+  return photo.status === "sent"
+    ? photo.uploadedFileName ?? photo.fileName
+    : photo.fileName;
 }
 
 function PhotoViewer({
@@ -104,153 +82,236 @@ function PhotoViewer({
   const [currentIndex, setCurrentIndex] =
     useState(initialIndex);
 
-  const [scale, setScaleState] = useState(1);
-  const [offsetX, setOffsetXState] = useState(0);
-  const [offsetY, setOffsetYState] = useState(0);
+  const [urlMap, setUrlMap] =
+    useState<Record<string, string>>({});
 
-  /*
-   * 0 = 現在写真が中央
-   * マイナス = 左へドラッグ
-   * プラス = 右へドラッグ
-   */
-  const [trackDragX, setTrackDragXState] = useState(0);
-  const [trackTransition, setTrackTransition] =
+  const [stageWidth, setStageWidth] =
+    useState(window.innerWidth);
+
+  const [scale, setScale] =
+    useState(1);
+
+  const [offsetX, setOffsetX] =
+    useState(0);
+
+  const [offsetY, setOffsetY] =
+    useState(0);
+
+  const [trackDragX, setTrackDragX] =
+    useState(0);
+
+  const [trackAnimating, setTrackAnimating] =
     useState(false);
 
-  const [closeDragY, setCloseDragYState] = useState(0);
-  const [closeTransition, setCloseTransition] =
+  const [closeDragY, setCloseDragY] =
+    useState(0);
+
+  const [closeAnimating, setCloseAnimating] =
     useState(false);
 
-  const [stageWidth, setStageWidth] = useState(
-    window.innerWidth
-  );
+  const stageRef =
+    useRef<HTMLDivElement | null>(null);
 
-  const stageRef = useRef<HTMLDivElement | null>(null);
   const currentImageRef =
     useRef<HTMLImageElement | null>(null);
 
-  /*
-   * React stateだけだとpointermove中に値が1フレーム遅れるため、
-   * ジェスチャー計算用にrefも同期させます。
-   */
-  const scaleRef = useRef(1);
-  const offsetXRef = useRef(0);
-  const offsetYRef = useRef(0);
-  const trackDragXRef = useRef(0);
-  const closeDragYRef = useRef(0);
+  const scaleRef =
+    useRef(1);
+
+  const offsetXRef =
+    useRef(0);
+
+  const offsetYRef =
+    useRef(0);
+
+  const trackDragXRef =
+    useRef(0);
+
+  const closeDragYRef =
+    useRef(0);
 
   const gestureModeRef =
     useRef<GestureMode>("none");
 
-  const pointersRef =
-    useRef<Map<number, PointerPoint>>(new Map());
+  const activePointersRef =
+    useRef<Map<number, Point>>(
+      new Map()
+    );
 
   const primaryPointerIdRef =
     useRef<number | null>(null);
 
-  const gestureStartRef = useRef({
-    x: 0,
-    y: 0,
-    offsetX: 0,
-    offsetY: 0,
-  });
+  const gestureStartRef =
+    useRef({
+      x: 0,
+      y: 0,
+      offsetX: 0,
+      offsetY: 0,
+    });
+
+  const pinchRef =
+    useRef({
+      startDistance: 0,
+      startScale: 1,
+      imageX: 0,
+      imageY: 0,
+    });
+
+  const lastTapRef =
+    useRef({
+      time: 0,
+      x: 0,
+      y: 0,
+    });
+
+  const slideDirectionRef =
+    useRef<
+      "next" |
+      "previous" |
+      null
+    >(null);
+
+  const currentPhoto =
+    photos[currentIndex];
+
+  const previousIndex =
+    useMemo(
+      () =>
+        currentIndex > 0
+          ? currentIndex - 1
+          : photos.length - 1,
+      [
+        currentIndex,
+        photos.length,
+      ]
+    );
+
+  const nextIndex =
+    useMemo(
+      () =>
+        currentIndex <
+        photos.length - 1
+          ? currentIndex + 1
+          : 0,
+      [
+        currentIndex,
+        photos.length,
+      ]
+    );
+
+  const previousPhoto =
+    photos[previousIndex];
+
+  const nextPhoto =
+    photos[nextIndex];
 
   /*
-   * ピンチ開始時の情報。
-   * focal point（指2本の中心）の真下にある画像位置を
-   * 拡大後も同じ場所へ残すために使います。
+   * 重要：
+   * 写真ごとにURLを紐付けます。
+   *
+   * currentIndex変更後に「前のURLが一瞬残る」
+   * という現象を防ぎます。
    */
-  const pinchRef = useRef({
-    startDistance: 0,
-    startScale: 1,
-    imagePointX: 0,
-    imagePointY: 0,
-  });
+  useEffect(() => {
+    const createdUrls:
+      Record<string, string> = {};
 
-  /*
-   * ダブルタップ判定
-   */
-  const lastTapRef = useRef({
-    time: 0,
-    x: 0,
-    y: 0,
-  });
+    for (const photo of photos) {
+      const blob =
+        getPhotoBlob(photo);
 
-  const slideCommitRef =
-    useRef<"next" | "previous" | null>(null);
+      if (!blob) {
+        continue;
+      }
 
-  const closeCommitRef = useRef(false);
-
-  const currentPhoto = photos[currentIndex];
-
-  const previousIndex = useMemo(() => {
-    if (photos.length === 0) {
-      return 0;
+      createdUrls[photo.id] =
+        URL.createObjectURL(blob);
     }
 
-    return currentIndex > 0
-      ? currentIndex - 1
-      : photos.length - 1;
-  }, [currentIndex, photos.length]);
+    setUrlMap(createdUrls);
 
-  const nextIndex = useMemo(() => {
-    if (photos.length === 0) {
-      return 0;
-    }
+    return () => {
+      Object.values(
+        createdUrls
+      ).forEach((url) => {
+        URL.revokeObjectURL(
+          url
+        );
+      });
+    };
+  }, [photos]);
 
-    return currentIndex < photos.length - 1
-      ? currentIndex + 1
-      : 0;
-  }, [currentIndex, photos.length]);
+  useEffect(() => {
+    const oldOverflow =
+      document.body.style.overflow;
 
-  const previousPhoto = photos[previousIndex];
-  const nextPhoto = photos[nextIndex];
+    document.body.style.overflow =
+      "hidden";
 
-  /*
-   * 前・現在・次の3枚を常にDOMに置いておきます。
-   * そのためスワイプ中に次写真がその場で横から見えてきます。
-   */
-  const previousUrl = usePhotoUrl(previousPhoto);
-  const currentUrl = usePhotoUrl(currentPhoto);
-  const nextUrl = usePhotoUrl(nextPhoto);
-
-  const syncScale = (value: number) => {
-    scaleRef.current = value;
-    setScaleState(value);
-  };
-
-  const syncOffset = (x: number, y: number) => {
-    offsetXRef.current = x;
-    offsetYRef.current = y;
-    setOffsetXState(x);
-    setOffsetYState(y);
-  };
-
-  const syncTrackDragX = (value: number) => {
-    trackDragXRef.current = value;
-    setTrackDragXState(value);
-  };
-
-  const syncCloseDragY = (value: number) => {
-    closeDragYRef.current = value;
-    setCloseDragYState(value);
-  };
-
-  const updateStageWidth = useCallback(() => {
-    const stage = stageRef.current;
-
-    if (!stage) {
-      setStageWidth(window.innerWidth);
-      return;
-    }
-
-    setStageWidth(stage.clientWidth || window.innerWidth);
+    return () => {
+      document.body.style.overflow =
+        oldOverflow;
+    };
   }, []);
+
+  const syncScale = (
+    value: number
+  ) => {
+    scaleRef.current =
+      value;
+
+    setScale(value);
+  };
+
+  const syncOffset = (
+    x: number,
+    y: number
+  ) => {
+    offsetXRef.current =
+      x;
+
+    offsetYRef.current =
+      y;
+
+    setOffsetX(x);
+    setOffsetY(y);
+  };
+
+  const syncTrack = (
+    value: number
+  ) => {
+    trackDragXRef.current =
+      value;
+
+    setTrackDragX(value);
+  };
+
+  const syncClose = (
+    value: number
+  ) => {
+    closeDragYRef.current =
+      value;
+
+    setCloseDragY(value);
+  };
+
+  const updateStageWidth =
+    useCallback(() => {
+      const width =
+        stageRef.current
+          ?.clientWidth ??
+        window.innerWidth;
+
+      setStageWidth(width);
+    }, []);
 
   useEffect(() => {
     updateStageWidth();
 
-    window.addEventListener("resize", updateStageWidth);
+    window.addEventListener(
+      "resize",
+      updateStageWidth
+    );
 
     return () => {
       window.removeEventListener(
@@ -260,738 +321,1202 @@ function PhotoViewer({
     };
   }, [updateStageWidth]);
 
-  useEffect(() => {
-    const oldOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = oldOverflow;
-    };
-  }, []);
-
   /*
-   * 画像が切り替わったらズームを初期化。
+   * 写真切替後は
+   * 新写真を100%・中央位置から開始。
    */
   useEffect(() => {
     syncScale(1);
     syncOffset(0, 0);
   }, [currentIndex]);
 
-  const getPanBounds = useCallback(
-    (targetScale: number) => {
-      const stage = stageRef.current;
-      const image = currentImageRef.current;
+  const getPanBounds =
+    useCallback(
+      (
+        targetScale: number
+      ) => {
+        const stage =
+          stageRef.current;
 
-      if (
-        !stage ||
-        !image ||
-        targetScale <= 1
-      ) {
+        const image =
+          currentImageRef.current;
+
+        if (
+          !stage ||
+          !image ||
+          targetScale <= 1
+        ) {
+          return {
+            maxX: 0,
+            maxY: 0,
+          };
+        }
+
+        const scaledWidth =
+          image.offsetWidth *
+          targetScale;
+
+        const scaledHeight =
+          image.offsetHeight *
+          targetScale;
+
         return {
-          maxX: 0,
-          maxY: 0,
+          maxX:
+            Math.max(
+              0,
+              (
+                scaledWidth -
+                stage.clientWidth
+              ) / 2
+            ),
+
+          maxY:
+            Math.max(
+              0,
+              (
+                scaledHeight -
+                stage.clientHeight
+              ) / 2
+            ),
         };
-      }
+      },
+      []
+    );
 
-      const stageWidthValue = stage.clientWidth;
-      const stageHeightValue = stage.clientHeight;
+  const clampOffset =
+    useCallback(
+      (
+        x: number,
+        y: number,
+        targetScale: number
+      ) => {
+        const {
+          maxX,
+          maxY,
+        } =
+          getPanBounds(
+            targetScale
+          );
 
-      /*
-       * offsetWidth/Heightはscale前の画像表示サイズ。
-       */
-      const imageWidth = image.offsetWidth;
-      const imageHeight = image.offsetHeight;
+        return {
+          x:
+            clamp(
+              x,
+              -maxX,
+              maxX
+            ),
 
-      const scaledWidth = imageWidth * targetScale;
-      const scaledHeight = imageHeight * targetScale;
+          y:
+            clamp(
+              y,
+              -maxY,
+              maxY
+            ),
+        };
+      },
+      [getPanBounds]
+    );
 
-      return {
-        maxX: Math.max(
-          0,
-          (scaledWidth - stageWidthValue) / 2
-        ),
-        maxY: Math.max(
-          0,
-          (scaledHeight - stageHeightValue) / 2
-        ),
-      };
-    },
-    []
-  );
-
-  const clampOffset = useCallback(
-    (
-      x: number,
-      y: number,
-      targetScale: number
-    ) => {
-      const { maxX, maxY } =
-        getPanBounds(targetScale);
-
-      return {
-        x: clamp(x, -maxX, maxX),
-        y: clamp(y, -maxY, maxY),
-      };
-    },
-    [getPanBounds]
-  );
-
-  const resetZoom = useCallback(() => {
-    syncScale(1);
-    syncOffset(0, 0);
-  }, []);
+  const resetZoom =
+    useCallback(() => {
+      syncScale(1);
+      syncOffset(0, 0);
+    }, []);
 
   /*
-   * 指やマウスの位置を中心に拡大します。
-   * 「触った場所が飛ぶ」問題を避けるための重要部分です。
+   * 指やマウスの位置を基準にズーム。
+   *
+   * stage中心ではなく、
+   * 実際に触った場所の画像座標を保存するので、
+   * 拡大したい場所が勝手に左上等へ飛びにくくなります。
    */
-  const zoomAt = useCallback(
+  const zoomAt =
+    useCallback(
+      (
+        clientX: number,
+        clientY: number,
+        targetScale: number
+      ) => {
+        const stage =
+          stageRef.current;
+
+        if (!stage) {
+          return;
+        }
+
+        const rect =
+          stage.getBoundingClientRect();
+
+        const localX =
+          clientX -
+          (
+            rect.left +
+            rect.width / 2
+          );
+
+        const localY =
+          clientY -
+          (
+            rect.top +
+            rect.height / 2
+          );
+
+        const oldScale =
+          scaleRef.current;
+
+        const imageX =
+          (
+            localX -
+            offsetXRef.current
+          ) / oldScale;
+
+        const imageY =
+          (
+            localY -
+            offsetYRef.current
+          ) / oldScale;
+
+        const desiredX =
+          localX -
+          imageX *
+          targetScale;
+
+        const desiredY =
+          localY -
+          imageY *
+          targetScale;
+
+        const corrected =
+          clampOffset(
+            desiredX,
+            desiredY,
+            targetScale
+          );
+
+        syncScale(
+          targetScale
+        );
+
+        syncOffset(
+          corrected.x,
+          corrected.y
+        );
+      },
+      [clampOffset]
+    );
+
+  const getPointerPair =
+    () => {
+      const values =
+        Array.from(
+          activePointersRef
+            .current
+            .values()
+        );
+
+      if (
+        values.length < 2
+      ) {
+        return null;
+      }
+
+      return {
+        first:
+          values[0],
+
+        second:
+          values[1],
+      };
+    };
+
+  const beginPinch =
+    () => {
+      const pair =
+        getPointerPair();
+
+      const stage =
+        stageRef.current;
+
+      if (
+        !pair ||
+        !stage
+      ) {
+        return;
+      }
+
+      const {
+        first,
+        second,
+      } = pair;
+
+      const centerX =
+        (
+          first.x +
+          second.x
+        ) / 2;
+
+      const centerY =
+        (
+          first.y +
+          second.y
+        ) / 2;
+
+      const rect =
+        stage.getBoundingClientRect();
+
+      const localX =
+        centerX -
+        (
+          rect.left +
+          rect.width / 2
+        );
+
+      const localY =
+        centerY -
+        (
+          rect.top +
+          rect.height / 2
+        );
+
+      const startScale =
+        scaleRef.current;
+
+      pinchRef.current = {
+        startDistance:
+          Math.hypot(
+            second.x -
+            first.x,
+
+            second.y -
+            first.y
+          ),
+
+        startScale,
+
+        /*
+         * ピンチ開始時の
+         * 指中心直下の「画像座標」。
+         */
+        imageX:
+          (
+            localX -
+            offsetXRef.current
+          ) / startScale,
+
+        imageY:
+          (
+            localY -
+            offsetYRef.current
+          ) / startScale,
+      };
+
+      gestureModeRef.current =
+        "pinch";
+
+      setTrackAnimating(
+        false
+      );
+
+      syncTrack(0);
+
+      setCloseAnimating(
+        false
+      );
+
+      syncClose(0);
+    };
+
+  const updatePinch =
+    () => {
+      const pair =
+        getPointerPair();
+
+      const stage =
+        stageRef.current;
+
+      if (
+        !pair ||
+        !stage ||
+        pinchRef.current
+          .startDistance <= 0
+      ) {
+        return;
+      }
+
+      const {
+        first,
+        second,
+      } = pair;
+
+      const currentDistance =
+        Math.hypot(
+          second.x -
+          first.x,
+
+          second.y -
+          first.y
+        );
+
+      const targetScale =
+        clamp(
+          pinchRef.current
+            .startScale *
+          (
+            currentDistance /
+            pinchRef.current
+              .startDistance
+          ),
+
+          MIN_SCALE,
+          MAX_SCALE
+        );
+
+      /*
+       * 現在の2本指中心。
+       * ピンチ中に指自体を動かしても追従します。
+       */
+      const centerX =
+        (
+          first.x +
+          second.x
+        ) / 2;
+
+      const centerY =
+        (
+          first.y +
+          second.y
+        ) / 2;
+
+      const rect =
+        stage.getBoundingClientRect();
+
+      const localX =
+        centerX -
+        (
+          rect.left +
+          rect.width / 2
+        );
+
+      const localY =
+        centerY -
+        (
+          rect.top +
+          rect.height / 2
+        );
+
+      const desiredX =
+        localX -
+        pinchRef.current
+          .imageX *
+        targetScale;
+
+      const desiredY =
+        localY -
+        pinchRef.current
+          .imageY *
+        targetScale;
+
+      const corrected =
+        clampOffset(
+          desiredX,
+          desiredY,
+          targetScale
+        );
+
+      syncScale(
+        targetScale
+      );
+
+      syncOffset(
+        corrected.x,
+        corrected.y
+      );
+    };
+
+  const animatePhotoChange =
+    useCallback(
+      (
+        direction:
+          | "next"
+          | "previous"
+      ) => {
+        if (
+          photos.length <= 1 ||
+          scaleRef.current >
+            1.01 ||
+          slideDirectionRef
+            .current !== null
+        ) {
+          return;
+        }
+
+        const width =
+          stageRef.current
+            ?.clientWidth ??
+          stageWidth;
+
+        slideDirectionRef.current =
+          direction;
+
+        setTrackAnimating(
+          true
+        );
+
+        syncTrack(
+          direction === "next"
+            ? -width
+            : width
+        );
+      },
+      [
+        photos.length,
+        stageWidth,
+      ]
+    );
+
+  /*
+   * ボタンを押しても確実に動くよう、
+   * controlsはviewer-stageの外側へ置いています。
+   *
+   * そのため写真ジェスチャーのPointer Captureに
+   * ボタン操作が奪われません。
+   */
+  const handleTrackTransitionEnd =
+    () => {
+      const direction =
+        slideDirectionRef.current;
+
+      if (!direction) {
+        /*
+         * スワイプが閾値未満で
+         * 元へ戻るアニメーションの場合。
+         */
+        setTrackAnimating(
+          false
+        );
+
+        return;
+      }
+
+      /*
+       * transitionを切った状態で
+       * 新写真へindexを進め、
+       * track位置を中央へ戻す。
+       *
+       * URLはphoto.idで引くため、
+       * 旧写真が一瞬再表示されません。
+       */
+      setTrackAnimating(
+        false
+      );
+
+      setCurrentIndex(
+        (current) => {
+          if (
+            direction ===
+            "next"
+          ) {
+            return current <
+              photos.length - 1
+              ? current + 1
+              : 0;
+          }
+
+          return current > 0
+            ? current - 1
+            : photos.length -
+                1;
+        }
+      );
+
+      syncTrack(0);
+
+      slideDirectionRef.current =
+        null;
+    };
+
+  const finishSwipe =
+    () => {
+      const width =
+        stageRef.current
+          ?.clientWidth ??
+        stageWidth;
+
+      const threshold =
+        Math.max(
+          SWIPE_THRESHOLD,
+          width * 0.17
+        );
+
+      const x =
+        trackDragXRef.current;
+
+      if (
+        Math.abs(x) >=
+        threshold
+      ) {
+        animatePhotoChange(
+          x < 0
+            ? "next"
+            : "previous"
+        );
+
+        return;
+      }
+
+      setTrackAnimating(
+        true
+      );
+
+      syncTrack(0);
+    };
+
+  const finishClose =
+    () => {
+      if (
+        closeDragYRef
+          .current >=
+        CLOSE_THRESHOLD
+      ) {
+        setCloseAnimating(
+          true
+        );
+
+        syncClose(
+          window.innerHeight
+        );
+
+        window.setTimeout(
+          onClose,
+          CLOSE_DURATION
+        );
+
+        return;
+      }
+
+      setCloseAnimating(
+        true
+      );
+
+      syncClose(0);
+    };
+
+  const handlePointerDown =
     (
-      clientX: number,
-      clientY: number,
-      targetScale: number
+      event:
+        ReactPointerEvent<HTMLDivElement>
     ) => {
-      const stage = stageRef.current;
+      if (
+        event.pointerType ===
+          "mouse" &&
+        event.button !== 0
+      ) {
+        return;
+      }
+
+      try {
+        event.currentTarget
+          .setPointerCapture(
+            event.pointerId
+          );
+      } catch {
+        /*
+         * 一部ブラウザで
+         * capture不可でも処理継続。
+         */
+      }
+
+      activePointersRef.current.set(
+        event.pointerId,
+        {
+          x: event.clientX,
+          y: event.clientY,
+        }
+      );
+
+      /*
+       * 2本目の指が来たら
+       * 即ピンチへ。
+       */
+      if (
+        activePointersRef
+          .current.size === 2
+      ) {
+        beginPinch();
+        return;
+      }
+
+      if (
+        activePointersRef
+          .current.size !== 1
+      ) {
+        return;
+      }
+
+      primaryPointerIdRef.current =
+        event.pointerId;
+
+      gestureStartRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+
+        offsetX:
+          offsetXRef.current,
+
+        offsetY:
+          offsetYRef.current,
+      };
+
+      if (
+        scaleRef.current >
+        1.01
+      ) {
+        gestureModeRef.current =
+          "pan";
+      } else {
+        gestureModeRef.current =
+          "pending";
+
+        setTrackAnimating(
+          false
+        );
+
+        syncTrack(0);
+
+        setCloseAnimating(
+          false
+        );
+
+        syncClose(0);
+      }
+    };
+
+  const handlePointerMove =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      if (
+        !activePointersRef
+          .current
+          .has(
+            event.pointerId
+          )
+      ) {
+        return;
+      }
+
+      activePointersRef.current.set(
+        event.pointerId,
+        {
+          x: event.clientX,
+          y: event.clientY,
+        }
+      );
+
+      if (
+        activePointersRef
+          .current.size >= 2
+      ) {
+        if (
+          gestureModeRef
+            .current !==
+          "pinch"
+        ) {
+          beginPinch();
+        }
+
+        updatePinch();
+        return;
+      }
+
+      const start =
+        gestureStartRef.current;
+
+      const dx =
+        event.clientX -
+        start.x;
+
+      const dy =
+        event.clientY -
+        start.y;
+
+      if (
+        gestureModeRef
+          .current ===
+        "pan"
+      ) {
+        const corrected =
+          clampOffset(
+            start.offsetX +
+              dx,
+
+            start.offsetY +
+              dy,
+
+            scaleRef.current
+          );
+
+        syncOffset(
+          corrected.x,
+          corrected.y
+        );
+
+        return;
+      }
+
+      if (
+        gestureModeRef
+          .current ===
+        "pending"
+      ) {
+        if (
+          Math.abs(dx) <
+            GESTURE_LOCK &&
+          Math.abs(dy) <
+            GESTURE_LOCK
+        ) {
+          return;
+        }
+
+        if (
+          dy > 0 &&
+          Math.abs(dy) >
+            Math.abs(dx) *
+              1.12
+        ) {
+          gestureModeRef.current =
+            "close";
+        } else if (
+          Math.abs(dx) >
+          Math.abs(dy) *
+            1.05
+        ) {
+          gestureModeRef.current =
+            "swipe";
+        } else {
+          return;
+        }
+      }
+
+      if (
+        gestureModeRef
+          .current ===
+        "close"
+      ) {
+        syncClose(
+          Math.max(
+            0,
+            dy
+          )
+        );
+
+        return;
+      }
+
+      if (
+        gestureModeRef
+          .current ===
+        "swipe"
+      ) {
+        const width =
+          stageRef.current
+            ?.clientWidth ??
+          stageWidth;
+
+        syncTrack(
+          clamp(
+            dx,
+            -width,
+            width
+          )
+        );
+      }
+    };
+
+  const isTapGesture =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      const start =
+        gestureStartRef.current;
+
+      const distance =
+        Math.hypot(
+          event.clientX -
+            start.x,
+
+          event.clientY -
+            start.y
+        );
+
+      return (
+        distance <= 22
+      );
+    };
+
+  const handleDoubleTap =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      if (
+        event.pointerType !==
+        "touch"
+      ) {
+        return false;
+      }
+
+      if (
+        !isTapGesture(
+          event
+        )
+      ) {
+        /*
+         * 少しでも大きく動かした操作は
+         * タップ履歴をリセット。
+         */
+        lastTapRef.current = {
+          time: 0,
+          x: 0,
+          y: 0,
+        };
+
+        return false;
+      }
+
+      const now =
+        performance.now();
+
+      const previous =
+        lastTapRef.current;
+
+      const sameArea =
+        Math.hypot(
+          event.clientX -
+            previous.x,
+
+          event.clientY -
+            previous.y
+        ) <=
+        DOUBLE_TAP_DISTANCE;
+
+      const isDouble =
+        previous.time > 0 &&
+        now -
+          previous.time <=
+          DOUBLE_TAP_MS &&
+        sameArea;
+
+      if (
+        isDouble
+      ) {
+        /*
+         * ★2回目で即発火し、
+         * その後の3回目が別のダブル判定にならないようリセット。
+         */
+        lastTapRef.current = {
+          time: 0,
+          x: 0,
+          y: 0,
+        };
+
+        if (
+          scaleRef.current <=
+          1.01
+        ) {
+          zoomAt(
+            event.clientX,
+            event.clientY,
+            DOUBLE_TAP_SCALE
+          );
+        } else {
+          resetZoom();
+        }
+
+        return true;
+      }
+
+      lastTapRef.current = {
+        time: now,
+        x: event.clientX,
+        y: event.clientY,
+      };
+
+      return false;
+    };
+
+  const finishPointer =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      const mode =
+        gestureModeRef.current;
+
+      activePointersRef.current.delete(
+        event.pointerId
+      );
+
+      if (
+        mode ===
+        "pinch"
+      ) {
+        /*
+         * 2本指を離したらピンチ終了。
+         * 残った1本を勝手にパンへ変換しません。
+         */
+        if (
+          activePointersRef
+            .current.size <
+          2
+        ) {
+          gestureModeRef.current =
+            "none";
+        }
+
+        if (
+          scaleRef.current <=
+          1.02
+        ) {
+          resetZoom();
+        } else {
+          const corrected =
+            clampOffset(
+              offsetXRef.current,
+              offsetYRef.current,
+              scaleRef.current
+            );
+
+          syncOffset(
+            corrected.x,
+            corrected.y
+          );
+        }
+
+        return;
+      }
+
+      if (
+        event.pointerId !==
+        primaryPointerIdRef
+          .current
+      ) {
+        return;
+      }
+
+      primaryPointerIdRef.current =
+        null;
+
+      if (
+        mode ===
+        "pending" &&
+        handleDoubleTap(
+          event
+        )
+      ) {
+        gestureModeRef.current =
+          "none";
+
+        return;
+      }
+
+      if (
+        mode ===
+        "swipe"
+      ) {
+        finishSwipe();
+      } else if (
+        mode ===
+        "close"
+      ) {
+        finishClose();
+      } else if (
+        mode ===
+        "pan"
+      ) {
+        const corrected =
+          clampOffset(
+            offsetXRef.current,
+            offsetYRef.current,
+            scaleRef.current
+          );
+
+        syncOffset(
+          corrected.x,
+          corrected.y
+        );
+      }
+
+      gestureModeRef.current =
+        "none";
+    };
+
+  const handlePointerUp =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      finishPointer(
+        event
+      );
+    };
+
+  const handlePointerCancel =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      activePointersRef.current.delete(
+        event.pointerId
+      );
+
+      primaryPointerIdRef.current =
+        null;
+
+      gestureModeRef.current =
+        "none";
+
+      setTrackAnimating(
+        true
+      );
+
+      syncTrack(0);
+
+      setCloseAnimating(
+        true
+      );
+
+      syncClose(0);
+    };
+
+  const handleDoubleClick =
+    (
+      event:
+        ReactMouseEvent<HTMLImageElement>
+    ) => {
+      if (
+        scaleRef.current <=
+        1.01
+      ) {
+        zoomAt(
+          event.clientX,
+          event.clientY,
+          DOUBLE_TAP_SCALE
+        );
+      } else {
+        resetZoom();
+      }
+    };
+
+  const zoomIn =
+    () => {
+      const stage =
+        stageRef.current;
 
       if (!stage) {
         return;
       }
 
-      const stageRect = stage.getBoundingClientRect();
+      const rect =
+        stage.getBoundingClientRect();
 
-      /*
-       * stage中央を(0, 0)にした座標。
-       */
-      const localX =
-        clientX - (stageRect.left + stageRect.width / 2);
-
-      const localY =
-        clientY - (stageRect.top + stageRect.height / 2);
-
-      const oldScale = scaleRef.current;
-      const oldOffsetX = offsetXRef.current;
-      const oldOffsetY = offsetYRef.current;
-
-      /*
-       * 指の真下にあった「画像上の座標」。
-       */
-      const imagePointX =
-        (localX - oldOffsetX) / oldScale;
-
-      const imagePointY =
-        (localY - oldOffsetY) / oldScale;
-
-      /*
-       * 新倍率でも同じ画像座標が指の下に来るようoffsetを逆算。
-       */
-      const desiredX =
-        localX - imagePointX * targetScale;
-
-      const desiredY =
-        localY - imagePointY * targetScale;
-
-      const corrected = clampOffset(
-        desiredX,
-        desiredY,
-        targetScale
-      );
-
-      syncScale(targetScale);
-      syncOffset(corrected.x, corrected.y);
-    },
-    [clampOffset]
-  );
-
-  const getTwoPointers = () => {
-    const values = Array.from(
-      pointersRef.current.values()
-    );
-
-    if (values.length < 2) {
-      return null;
-    }
-
-    return {
-      first: values[0],
-      second: values[1],
-    };
-  };
-
-  const startPinch = () => {
-    const pair = getTwoPointers();
-    const stage = stageRef.current;
-
-    if (!pair || !stage) {
-      return;
-    }
-
-    const { first, second } = pair;
-
-    const centerX = (first.x + second.x) / 2;
-    const centerY = (first.y + second.y) / 2;
-
-    const stageRect = stage.getBoundingClientRect();
-
-    const localCenterX =
-      centerX - (stageRect.left + stageRect.width / 2);
-
-    const localCenterY =
-      centerY - (stageRect.top + stageRect.height / 2);
-
-    const startScale = scaleRef.current;
-
-    pinchRef.current = {
-      startDistance: Math.hypot(
-        second.x - first.x,
-        second.y - first.y
-      ),
-      startScale,
-
-      /*
-       * 指2本の中心直下の画像座標を保存。
-       */
-      imagePointX:
-        (localCenterX - offsetXRef.current) /
-        startScale,
-
-      imagePointY:
-        (localCenterY - offsetYRef.current) /
-        startScale,
-    };
-
-    gestureModeRef.current = "pinch";
-
-    /*
-     * ピンチ開始時は写真スワイプや閉じる動きをキャンセル。
-     */
-    setTrackTransition(false);
-    syncTrackDragX(0);
-
-    setCloseTransition(false);
-    syncCloseDragY(0);
-  };
-
-  const updatePinch = () => {
-    const pair = getTwoPointers();
-    const stage = stageRef.current;
-
-    if (!pair || !stage) {
-      return;
-    }
-
-    const { first, second } = pair;
-
-    const currentDistance = Math.hypot(
-      second.x - first.x,
-      second.y - first.y
-    );
-
-    if (pinchRef.current.startDistance <= 0) {
-      return;
-    }
-
-    const targetScale = clamp(
-      pinchRef.current.startScale *
-        (currentDistance /
-          pinchRef.current.startDistance),
-      MIN_SCALE,
-      MAX_SCALE
-    );
-
-    const centerX = (first.x + second.x) / 2;
-    const centerY = (first.y + second.y) / 2;
-
-    const stageRect = stage.getBoundingClientRect();
-
-    const localCenterX =
-      centerX - (stageRect.left + stageRect.width / 2);
-
-    const localCenterY =
-      centerY - (stageRect.top + stageRect.height / 2);
-
-    /*
-     * ピンチ中心が移動しても、同じ画像位置が
-     * その中心の下に残るよう計算。
-     */
-    const desiredX =
-      localCenterX -
-      pinchRef.current.imagePointX * targetScale;
-
-    const desiredY =
-      localCenterY -
-      pinchRef.current.imagePointY * targetScale;
-
-    const corrected = clampOffset(
-      desiredX,
-      desiredY,
-      targetScale
-    );
-
-    syncScale(targetScale);
-    syncOffset(corrected.x, corrected.y);
-  };
-
-  const animatePhotoChange = useCallback(
-    (direction: "next" | "previous") => {
-      if (
-        photos.length <= 1 ||
-        scaleRef.current !== 1 ||
-        slideCommitRef.current !== null
-      ) {
-        return;
-      }
-
-      const width =
-        stageRef.current?.clientWidth || stageWidth;
-
-      slideCommitRef.current = direction;
-
-      setTrackTransition(true);
-
-      syncTrackDragX(
-        direction === "next"
-          ? -width
-          : width
-      );
-    },
-    [photos.length, stageWidth]
-  );
-
-  /*
-   * trackのCSS transition完了時。
-   * currentIndexを書き換えた後、transition無しで中央へ戻します。
-   */
-  const handleTrackTransitionEnd = () => {
-    const direction = slideCommitRef.current;
-
-    if (!direction) {
-      return;
-    }
-
-    setCurrentIndex((current) => {
-      if (direction === "next") {
-        return current < photos.length - 1
-          ? current + 1
-          : 0;
-      }
-
-      return current > 0
-        ? current - 1
-        : photos.length - 1;
-    });
-
-    slideCommitRef.current = null;
-
-    setTrackTransition(false);
-    syncTrackDragX(0);
-  };
-
-  const finishHorizontalSwipe = () => {
-    const width =
-      stageRef.current?.clientWidth || stageWidth;
-
-    const threshold = Math.min(
-      Math.max(SWIPE_THRESHOLD, width * 0.18),
-      width * 0.35
-    );
-
-    const x = trackDragXRef.current;
-
-    if (Math.abs(x) >= threshold) {
-      animatePhotoChange(
-        x < 0 ? "next" : "previous"
-      );
-
-      return;
-    }
-
-    /*
-     * 閾値に届かなければヌルっと元へ戻る。
-     */
-    setTrackTransition(true);
-    syncTrackDragX(0);
-  };
-
-  const finishCloseSwipe = () => {
-    if (closeDragYRef.current >= CLOSE_THRESHOLD) {
-      closeCommitRef.current = true;
-
-      setCloseTransition(true);
-      syncCloseDragY(window.innerHeight);
-
-      window.setTimeout(() => {
-        onClose();
-      }, CLOSE_DURATION);
-
-      return;
-    }
-
-    setCloseTransition(true);
-    syncCloseDragY(0);
-  };
-
-  const handlePointerDown = (
-    event: ReactPointerEvent<HTMLDivElement>
-  ) => {
-    if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
-    }
-
-    event.currentTarget.setPointerCapture(
-      event.pointerId
-    );
-
-    pointersRef.current.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY,
-    });
-
-    /*
-     * 2本目の指が来た瞬間にピンチへ移行。
-     */
-    if (pointersRef.current.size === 2) {
-      startPinch();
-      return;
-    }
-
-    if (pointersRef.current.size !== 1) {
-      return;
-    }
-
-    primaryPointerIdRef.current = event.pointerId;
-
-    gestureStartRef.current = {
-      x: event.clientX,
-      y: event.clientY,
-      offsetX: offsetXRef.current,
-      offsetY: offsetYRef.current,
-    };
-
-    if (scaleRef.current > 1) {
-      gestureModeRef.current = "pan";
-      return;
-    }
-
-    gestureModeRef.current = "pending";
-
-    setTrackTransition(false);
-    syncTrackDragX(0);
-
-    setCloseTransition(false);
-    syncCloseDragY(0);
-  };
-
-  const handlePointerMove = (
-    event: ReactPointerEvent<HTMLDivElement>
-  ) => {
-    if (!pointersRef.current.has(event.pointerId)) {
-      return;
-    }
-
-    pointersRef.current.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY,
-    });
-
-    if (
-      gestureModeRef.current === "pinch" ||
-      pointersRef.current.size >= 2
-    ) {
-      if (pointersRef.current.size >= 2) {
-        if (gestureModeRef.current !== "pinch") {
-          startPinch();
-        }
-
-        updatePinch();
-      }
-
-      return;
-    }
-
-    const start = gestureStartRef.current;
-
-    const dx = event.clientX - start.x;
-    const dy = event.clientY - start.y;
-
-    if (gestureModeRef.current === "pan") {
-      const corrected = clampOffset(
-        start.offsetX + dx,
-        start.offsetY + dy,
-        scaleRef.current
-      );
-
-      syncOffset(corrected.x, corrected.y);
-      return;
-    }
-
-    /*
-     * まだ横・縦どちらのジェスチャーか決めていない状態。
-     */
-    if (gestureModeRef.current === "pending") {
-      if (
-        Math.abs(dx) < MOVE_LOCK_THRESHOLD &&
-        Math.abs(dy) < MOVE_LOCK_THRESHOLD
-      ) {
-        return;
-      }
-
-      if (
-        dy > 0 &&
-        Math.abs(dy) > Math.abs(dx) * 1.1
-      ) {
-        gestureModeRef.current = "close";
-      } else if (
-        Math.abs(dx) > Math.abs(dy) * 1.05
-      ) {
-        gestureModeRef.current = "swipe";
-      } else {
-        return;
-      }
-    }
-
-    if (gestureModeRef.current === "close") {
-      /*
-       * 上方向へは動かさない。
-       */
-      syncCloseDragY(Math.max(0, dy));
-      return;
-    }
-
-    if (gestureModeRef.current === "swipe") {
-      const width =
-        stageRef.current?.clientWidth || stageWidth;
-
-      /*
-       * 端で少し抵抗を付ける。
-       */
-      const limited = clamp(
-        dx,
-        -width,
-        width
-      );
-
-      syncTrackDragX(limited);
-    }
-  };
-
-  const maybeHandleDoubleTap = (
-    event: ReactPointerEvent<HTMLDivElement>,
-    mode: GestureMode
-  ) => {
-    if (
-      event.pointerType !== "touch" ||
-      mode !== "pending"
-    ) {
-      return false;
-    }
-
-    const now = performance.now();
-    const previous = lastTapRef.current;
-
-    const distanceFromPrevious = Math.hypot(
-      event.clientX - previous.x,
-      event.clientY - previous.y
-    );
-
-    const isDoubleTap =
-      now - previous.time < 320 &&
-      distanceFromPrevious < 36;
-
-    lastTapRef.current = {
-      time: now,
-      x: event.clientX,
-      y: event.clientY,
-    };
-
-    if (!isDoubleTap) {
-      return false;
-    }
-
-    /*
-     * 1倍ならタップ位置を中心に2.5倍へ。
-     * 拡大済みなら1倍へ戻す。
-     */
-    if (scaleRef.current <= 1.01) {
       zoomAt(
-        event.clientX,
-        event.clientY,
-        DOUBLE_TAP_SCALE
+        rect.left +
+          rect.width / 2,
+
+        rect.top +
+          rect.height / 2,
+
+        clamp(
+          scaleRef.current +
+            0.5,
+
+          MIN_SCALE,
+          MAX_SCALE
+        )
       );
-    } else {
-      resetZoom();
-    }
+    };
 
-    return true;
-  };
+  const zoomOut =
+    () => {
+      const nextScale =
+        clamp(
+          scaleRef.current -
+            0.5,
 
-  const finishPointer = (
-    event: ReactPointerEvent<HTMLDivElement>
-  ) => {
-    const finishedMode = gestureModeRef.current;
-
-    pointersRef.current.delete(event.pointerId);
-
-    /*
-     * ピンチ中に片方の指だけ離れた場合、
-     * 残った1本でいきなりパンが始まらないよう一旦終了。
-     */
-    if (finishedMode === "pinch") {
-      if (pointersRef.current.size < 2) {
-        gestureModeRef.current = "none";
-      }
-
-      if (scaleRef.current <= 1.01) {
-        resetZoom();
-      } else {
-        const corrected = clampOffset(
-          offsetXRef.current,
-          offsetYRef.current,
-          scaleRef.current
+          MIN_SCALE,
+          MAX_SCALE
         );
 
-        syncOffset(corrected.x, corrected.y);
+      if (
+        nextScale <= 1
+      ) {
+        resetZoom();
+        return;
       }
 
-      return;
-    }
+      const stage =
+        stageRef.current;
 
-    if (
-      event.pointerId !== primaryPointerIdRef.current
-    ) {
-      return;
-    }
+      if (!stage) {
+        return;
+      }
 
-    primaryPointerIdRef.current = null;
+      const rect =
+        stage.getBoundingClientRect();
 
-    if (
-      maybeHandleDoubleTap(
-        event,
-        finishedMode
-      )
-    ) {
-      gestureModeRef.current = "none";
-      return;
-    }
-
-    if (finishedMode === "swipe") {
-      finishHorizontalSwipe();
-    } else if (finishedMode === "close") {
-      finishCloseSwipe();
-    } else if (finishedMode === "pan") {
-      const corrected = clampOffset(
-        offsetXRef.current,
-        offsetYRef.current,
-        scaleRef.current
-      );
-
-      syncOffset(corrected.x, corrected.y);
-    }
-
-    gestureModeRef.current = "none";
-  };
-
-  const handlePointerUp = (
-    event: ReactPointerEvent<HTMLDivElement>
-  ) => {
-    finishPointer(event);
-  };
-
-  const handlePointerCancel = (
-    event: ReactPointerEvent<HTMLDivElement>
-  ) => {
-    pointersRef.current.delete(event.pointerId);
-    primaryPointerIdRef.current = null;
-    gestureModeRef.current = "none";
-
-    setTrackTransition(true);
-    syncTrackDragX(0);
-
-    setCloseTransition(true);
-    syncCloseDragY(0);
-  };
-
-  const handleDoubleClick = (
-    event: ReactMouseEvent<HTMLImageElement>
-  ) => {
-    if (scaleRef.current <= 1.01) {
       zoomAt(
-        event.clientX,
-        event.clientY,
-        DOUBLE_TAP_SCALE
+        rect.left +
+          rect.width / 2,
+
+        rect.top +
+          rect.height / 2,
+
+        nextScale
       );
-    } else {
-      resetZoom();
-    }
-  };
-
-  const zoomIn = () => {
-    const stage = stageRef.current;
-
-    if (!stage) {
-      return;
-    }
-
-    const rect = stage.getBoundingClientRect();
-
-    zoomAt(
-      rect.left + rect.width / 2,
-      rect.top + rect.height / 2,
-      clamp(
-        scaleRef.current + 0.5,
-        MIN_SCALE,
-        MAX_SCALE
-      )
-    );
-  };
-
-  const zoomOut = () => {
-    const nextScale = clamp(
-      scaleRef.current - 0.5,
-      MIN_SCALE,
-      MAX_SCALE
-    );
-
-    if (nextScale <= 1) {
-      resetZoom();
-      return;
-    }
-
-    const stage = stageRef.current;
-
-    if (!stage) {
-      return;
-    }
-
-    const rect = stage.getBoundingClientRect();
-
-    zoomAt(
-      rect.left + rect.width / 2,
-      rect.top + rect.height / 2,
-      nextScale
-    );
-  };
+    };
 
   useEffect(() => {
-    const handleKeyDown = (
-      event: KeyboardEvent
-    ) => {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
+    const handleKeyDown =
+      (
+        event:
+          KeyboardEvent
+      ) => {
+        if (
+          event.key ===
+          "Escape"
+        ) {
+          onClose();
+          return;
+        }
 
-      if (scaleRef.current > 1) {
-        return;
-      }
+        if (
+          scaleRef.current >
+          1.01
+        ) {
+          return;
+        }
 
-      if (event.key === "ArrowRight") {
-        animatePhotoChange("next");
-      }
+        if (
+          event.key ===
+          "ArrowRight"
+        ) {
+          animatePhotoChange(
+            "next"
+          );
+        }
 
-      if (event.key === "ArrowLeft") {
-        animatePhotoChange("previous");
-      }
-    };
+        if (
+          event.key ===
+          "ArrowLeft"
+        ) {
+          animatePhotoChange(
+            "previous"
+          );
+        }
+      };
 
     window.addEventListener(
       "keydown",
@@ -1004,28 +1529,59 @@ function PhotoViewer({
         handleKeyDown
       );
     };
-  }, [animatePhotoChange, onClose]);
+  }, [
+    animatePhotoChange,
+    onClose,
+  ]);
 
-  if (!currentPhoto) {
+  if (
+    !currentPhoto ||
+    photos.length === 0
+  ) {
     return null;
   }
 
-  const displayName = getDisplayName(currentPhoto);
-  const tags = currentPhoto.tags ?? [];
-  const isSent = currentPhoto.status === "sent";
+  const currentUrl =
+    urlMap[
+      currentPhoto.id
+    ] ?? "";
 
-  const viewerOpacity = Math.max(
-    0.35,
-    1 - closeDragY / Math.max(500, window.innerHeight)
-  );
+  const previousUrl =
+    previousPhoto
+      ? urlMap[
+          previousPhoto.id
+        ] ?? ""
+      : "";
 
-  /*
-   * 3枚トラック:
-   * [前][現在][次]
-   * idle時は「現在」が中央なので -stageWidth。
-   * swipe分だけリアルタイムに加算します。
-   */
-  const trackX = -stageWidth + trackDragX;
+  const nextUrl =
+    nextPhoto
+      ? urlMap[
+          nextPhoto.id
+        ] ?? ""
+      : "";
+
+  const displayName =
+    getDisplayName(
+      currentPhoto
+    );
+
+  const tags =
+    currentPhoto.tags ?? [];
+
+  const trackX =
+    -stageWidth +
+    trackDragX;
+
+  const viewerOpacity =
+    Math.max(
+      0.3,
+      1 -
+        closeDragY /
+          Math.max(
+            420,
+            window.innerHeight
+          )
+    );
 
   return (
     <div
@@ -1034,21 +1590,25 @@ function PhotoViewer({
       aria-modal="true"
       aria-label="写真の全画面表示"
       style={{
-        transform: `translate3d(0, ${closeDragY}px, 0)`,
-        opacity: viewerOpacity,
+        transform:
+          `translate3d(0, ${closeDragY}px, 0)`,
+
+        opacity:
+          viewerOpacity,
+
         transition:
-          closeTransition && !closeCommitRef.current
+          closeAnimating
             ? `transform ${CLOSE_DURATION}ms ease, opacity ${CLOSE_DURATION}ms ease`
-            : closeTransition
-              ? `transform ${CLOSE_DURATION}ms ease-in, opacity ${CLOSE_DURATION}ms ease-in`
-              : "none",
+            : "none",
       }}
     >
       <header className="viewer-header">
         <button
           type="button"
           className="viewer-close"
-          onClick={onClose}
+          onClick={
+            onClose
+          }
           aria-label="閉じる"
         >
           ×
@@ -1056,37 +1616,54 @@ function PhotoViewer({
 
         <div className="viewer-title">
           <strong>
-            {isSent ? "送信済み" : "未送信"}
+            {currentPhoto.status ===
+            "sent"
+              ? "送信済み"
+              : "未送信"}
           </strong>
 
           <span>
-            {currentIndex + 1} / {photos.length}
+            {currentIndex + 1}
+            {" / "}
+            {photos.length}
           </span>
         </div>
 
         <div className="viewer-zoom">
           <button
             type="button"
-            onClick={zoomOut}
-            disabled={scale <= MIN_SCALE}
-            aria-label="縮小"
+            onClick={
+              zoomOut
+            }
+            disabled={
+              scale <=
+              MIN_SCALE
+            }
           >
             −
           </button>
 
           <button
             type="button"
-            onClick={resetZoom}
-            aria-label="拡大率をリセット"
+            onClick={
+              resetZoom
+            }
           >
-            {Math.round(scale * 100)}%
+            {Math.round(
+              scale * 100
+            )}
+            %
           </button>
 
           <button
             type="button"
-            onClick={zoomIn}
-            disabled={scale >= MAX_SCALE}
-            aria-label="拡大"
+            onClick={
+              zoomIn
+            }
+            disabled={
+              scale >=
+              MAX_SCALE
+            }
           >
             ＋
           </button>
@@ -1094,104 +1671,156 @@ function PhotoViewer({
       </header>
 
       <div
-        ref={stageRef}
+        ref={
+          stageRef
+        }
         className={
           scale > 1
             ? "viewer-stage zoomed"
             : "viewer-stage"
         }
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerCancel}
+        onPointerDown={
+          handlePointerDown
+        }
+        onPointerMove={
+          handlePointerMove
+        }
+        onPointerUp={
+          handlePointerUp
+        }
+        onPointerCancel={
+          handlePointerCancel
+        }
       >
         <div
           className="viewer-track"
           style={{
-            width: `${stageWidth * 3}px`,
-            transform: `translate3d(${trackX}px, 0, 0)`,
-            transition: trackTransition
-              ? `transform ${SLIDE_DURATION}ms cubic-bezier(.22,.61,.36,1)`
-              : "none",
+            width:
+              `${stageWidth * 3}px`,
+
+            transform:
+              `translate3d(${trackX}px, 0, 0)`,
+
+            transition:
+              trackAnimating
+                ? `transform ${SLIDE_DURATION}ms cubic-bezier(.22,.61,.36,1)`
+                : "none",
           }}
-          onTransitionEnd={handleTrackTransitionEnd}
+          onTransitionEnd={
+            handleTrackTransitionEnd
+          }
         >
           <div
             className="viewer-slide"
-            style={{ width: `${stageWidth}px` }}
+            style={{
+              width:
+                `${stageWidth}px`,
+            }}
           >
             {previousUrl && (
               <img
                 className="viewer-neighbor-image"
-                src={previousUrl}
+                src={
+                  previousUrl
+                }
                 alt=""
-                draggable={false}
+                draggable={
+                  false
+                }
               />
             )}
           </div>
 
           <div
             className="viewer-slide"
-            style={{ width: `${stageWidth}px` }}
+            style={{
+              width:
+                `${stageWidth}px`,
+            }}
           >
             {currentUrl && (
               <img
-                ref={currentImageRef}
+                ref={
+                  currentImageRef
+                }
                 className="viewer-image"
-                src={currentUrl}
-                alt={displayName}
-                draggable={false}
+                src={
+                  currentUrl
+                }
+                alt={
+                  displayName
+                }
+                draggable={
+                  false
+                }
                 style={{
-                  transform: `translate3d(${offsetX}px, ${offsetY}px, 0) scale(${scale})`,
+                  transform:
+                    `translate3d(${offsetX}px, ${offsetY}px, 0) scale(${scale})`,
                 }}
-                onDoubleClick={handleDoubleClick}
+                onDoubleClick={
+                  handleDoubleClick
+                }
               />
             )}
           </div>
 
           <div
             className="viewer-slide"
-            style={{ width: `${stageWidth}px` }}
+            style={{
+              width:
+                `${stageWidth}px`,
+            }}
           >
             {nextUrl && (
               <img
                 className="viewer-neighbor-image"
-                src={nextUrl}
+                src={
+                  nextUrl
+                }
                 alt=""
-                draggable={false}
+                draggable={
+                  false
+                }
               />
             )}
           </div>
         </div>
-
-        {scale === 1 && photos.length > 1 && (
-          <>
-            <button
-              type="button"
-              className="viewer-arrow viewer-arrow-left"
-              onClick={(event) => {
-                event.stopPropagation();
-                animatePhotoChange("previous");
-              }}
-              aria-label="前の写真"
-            >
-              ‹
-            </button>
-
-            <button
-              type="button"
-              className="viewer-arrow viewer-arrow-right"
-              onClick={(event) => {
-                event.stopPropagation();
-                animatePhotoChange("next");
-              }}
-              aria-label="次の写真"
-            >
-              ›
-            </button>
-          </>
-        )}
       </div>
+
+      {/*
+       * ★左右ボタンはviewer-stageの外側。
+       * PCでもPointer Captureの影響を受けません。
+       */}
+      {scale <= 1.01 &&
+        photos.length > 1 && (
+        <>
+          <button
+            type="button"
+            className="viewer-arrow viewer-arrow-left"
+            onClick={() =>
+              animatePhotoChange(
+                "previous"
+              )
+            }
+            aria-label="前の写真"
+          >
+            ‹
+          </button>
+
+          <button
+            type="button"
+            className="viewer-arrow viewer-arrow-right"
+            onClick={() =>
+              animatePhotoChange(
+                "next"
+              )
+            }
+            aria-label="次の写真"
+          >
+            ›
+          </button>
+        </>
+      )}
 
       <footer className="viewer-footer">
         <p className="viewer-file-name">
@@ -1200,15 +1829,23 @@ function PhotoViewer({
 
         {tags.length > 0 && (
           <div className="viewer-tags">
-            {tags.map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
+            {tags.map(
+              (tag) => (
+                <span
+                  key={
+                    tag
+                  }
+                >
+                  {tag}
+                </span>
+              )
+            )}
           </div>
         )}
 
         <p className="viewer-help">
           {scale > 1
-            ? "ドラッグ：移動　ピンチ：拡大縮小　ダブルタップ：リセット"
+            ? "ドラッグ：移動　ピンチ：拡大縮小　ダブルタップ：100%へ"
             : "左右：写真切替　↓：閉じる　ダブルタップ：拡大"}
         </p>
       </footer>
