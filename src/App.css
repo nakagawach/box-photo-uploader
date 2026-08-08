@@ -1083,3 +1083,15 @@ h1 {
       35px;
   }
 }
+
+.viewer-stage {
+  cursor: default;
+}
+
+.viewer-stage.zoomed {
+  cursor: grab;
+}
+
+.viewer-stage.zoomed:active {
+  cursor: grabbing;
+}

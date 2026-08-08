@@ -34,12 +34,11 @@ type ActiveTab =
   | "sent";
 
 const MAKE_WEBHOOK_URL =
-  "https://hook.us1.make.com/t4kttpgnjopclycliqczbyaqe1qb467v";
+  "ここは今動いているMakeのWebhook URLをそのまま残してください";
 
 function createId(): string {
   if (
-    typeof crypto
-      .randomUUID ===
+    typeof crypto.randomUUID ===
     "function"
   ) {
     return crypto.randomUUID();
@@ -92,11 +91,8 @@ async function createThumbnail(
       "canvas"
     );
 
-  canvas.width =
-    width;
-
-  canvas.height =
-    height;
+  canvas.width = width;
+  canvas.height = height;
 
   const context =
     canvas.getContext(
@@ -124,15 +120,13 @@ async function createThumbnail(
   const blob =
     await new Promise<
       Blob | null
-    >(
-      (resolve) => {
-        canvas.toBlob(
-          resolve,
-          "image/webp",
-          0.9
-        );
-      }
-    );
+    >((resolve) => {
+      canvas.toBlob(
+        resolve,
+        "image/webp",
+        0.9
+      );
+    });
 
   if (!blob) {
     throw new Error(
@@ -153,13 +147,14 @@ function createUploadFileName(
 
   const datePart = [
     createdAt.getFullYear(),
+
     String(
-      createdAt.getMonth() +
-        1
+      createdAt.getMonth() + 1
     ).padStart(
       2,
       "0"
     ),
+
     String(
       createdAt.getDate()
     ).padStart(
@@ -175,12 +170,14 @@ function createUploadFileName(
       2,
       "0"
     ),
+
     String(
       createdAt.getMinutes()
     ).padStart(
       2,
       "0"
     ),
+
     String(
       createdAt.getSeconds()
     ).padStart(
@@ -192,9 +189,7 @@ function createUploadFileName(
   const tagPart =
     (photo.tags ?? [])
       .length > 0
-      ? photo.tags.join(
-          "_"
-        )
+      ? photo.tags.join("_")
       : "タグなし";
 
   const idPart =
@@ -243,9 +238,7 @@ async function uploadPhotoToMake(
 
   const uploadFile =
     new File(
-      [
-        photo.file,
-      ],
+      [photo.file],
       uploadFileName,
       {
         type:
@@ -297,8 +290,9 @@ async function uploadPhotoToMake(
 
   const timer =
     window.setTimeout(
-      () =>
-        controller.abort(),
+      () => {
+        controller.abort();
+      },
       60000
     );
 
@@ -307,8 +301,7 @@ async function uploadPhotoToMake(
       await fetch(
         MAKE_WEBHOOK_URL,
         {
-          method:
-            "POST",
+          method: "POST",
 
           body:
             formData,
@@ -318,9 +311,7 @@ async function uploadPhotoToMake(
         }
       );
 
-    if (
-      !response.ok
-    ) {
+    if (!response.ok) {
       throw new Error(
         `Makeへの送信に失敗しました。HTTP ${response.status}`
       );
@@ -395,6 +386,9 @@ function App() {
   ] =
     useState("");
 
+  /*
+   * タブ切替用スワイプ
+   */
   const tabTouchStartX =
     useRef<
       number | null
@@ -404,6 +398,18 @@ function App() {
     useRef<
       number | null
     >(null);
+
+  /*
+   * ★今回追加
+   *
+   * 未送信と送信済み
+   * それぞれのスクロール位置を記憶
+   */
+  const scrollPositions =
+    useRef({
+      pending: 0,
+      sent: 0,
+    });
 
   const loadPhotos =
     async () => {
@@ -451,14 +457,12 @@ function App() {
       async () => {
         try {
           /*
-           * ブラウザへ
-           * 「このサイトの保存データを
-           * できるだけ消さないで」
-           * と要求します。
+           * IndexedDBを
+           * できるだけ消さないよう
+           * ブラウザへ要求
            */
           if (
-            navigator
-              .storage
+            navigator.storage
               ?.persist
           ) {
             const granted =
@@ -475,9 +479,7 @@ function App() {
           await deleteExpiredSentPhotos();
 
           await loadPhotos();
-        } catch (
-          error
-        ) {
+        } catch (error) {
           console.error(
             error
           );
@@ -495,17 +497,13 @@ function App() {
    * オンライン監視
    */
   useEffect(() => {
-    const online =
-      () =>
-        setIsOnline(
-          true
-        );
+    const online = () => {
+      setIsOnline(true);
+    };
 
-    const offline =
-      () =>
-        setIsOnline(
-          false
-        );
+    const offline = () => {
+      setIsOnline(false);
+    };
 
     window.addEventListener(
       "online",
@@ -530,6 +528,59 @@ function App() {
     };
   }, []);
 
+  /*
+   * ★タブ切替専用関数
+   *
+   * 現在位置を保存
+   * ↓
+   * タブ変更
+   * ↓
+   * 変更先の位置を復元
+   */
+  const switchTab = (
+    nextTab: ActiveTab
+  ) => {
+    if (
+      nextTab === activeTab
+    ) {
+      return;
+    }
+
+    /*
+     * 現在のタブの位置を保存
+     */
+    scrollPositions.current[
+      activeTab
+    ] = window.scrollY;
+
+    setActiveTab(
+      nextTab
+    );
+
+    /*
+     * Reactが画面を書き換えた後に
+     * 元の位置へ戻す
+     */
+    requestAnimationFrame(
+      () => {
+        requestAnimationFrame(
+          () => {
+            window.scrollTo({
+              top:
+                scrollPositions
+                  .current[
+                  nextTab
+                ],
+
+              behavior:
+                "instant",
+            });
+          }
+        );
+      }
+    );
+  };
+
   const handlePhotoChange =
     async (
       event:
@@ -537,24 +588,19 @@ function App() {
     ) => {
       const files =
         Array.from(
-          event.target
-            .files ?? []
+          event.target.files ??
+            []
         );
 
       if (
-        files.length ===
-        0
+        files.length === 0
       ) {
         return;
       }
 
-      setIsSaving(
-        true
-      );
+      setIsSaving(true);
 
-      setErrorMessage(
-        ""
-      );
+      setErrorMessage("");
 
       const newPhotos:
         StoredPhoto[] =
@@ -592,12 +638,10 @@ function App() {
 
         await loadPhotos();
 
-        setActiveTab(
+        switchTab(
           "pending"
         );
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.error(
           error
         );
@@ -609,9 +653,7 @@ function App() {
         event.target.value =
           "";
 
-        setIsSaving(
-          false
-        );
+        setIsSaving(false);
       }
     };
 
@@ -640,8 +682,7 @@ function App() {
         (current) =>
           current.map(
             (photo) =>
-              photo.id ===
-              id
+              photo.id === id
                 ? updated
                 : photo
           )
@@ -651,9 +692,7 @@ function App() {
         await updatePhoto(
           updated
         );
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.error(
           error
         );
@@ -676,9 +715,7 @@ function App() {
         return;
       }
 
-      await deletePhoto(
-        id
-      );
+      await deletePhoto(id);
 
       await loadPhotos();
     };
@@ -694,32 +731,21 @@ function App() {
         return;
       }
 
-      setIsUploading(
-        true
-      );
+      setIsUploading(true);
 
-      setErrorMessage(
-        ""
-      );
+      setErrorMessage("");
 
-      let successCount =
-        0;
+      let successCount = 0;
 
       try {
         for (
           const photo
           of pendingPhotos
         ) {
-          if (
-            !photo.file
-          ) {
+          if (!photo.file) {
             continue;
           }
 
-          /*
-           * この名前が実際に
-           * Boxへ送られる名前。
-           */
           const uploadedFileName =
             createUploadFileName(
               photo
@@ -739,19 +765,11 @@ function App() {
             StoredPhoto = {
             ...photo,
 
-            /*
-             * 元画像は
-             * IndexedDBから外す。
-             */
             file:
               undefined,
 
             thumbnail,
 
-            /*
-             * Box上の実ファイル名を
-             * 履歴として保存。
-             */
             uploadedFileName,
 
             status:
@@ -769,22 +787,19 @@ function App() {
             sentPhoto
           );
 
-          successCount +=
-            1;
+          successCount += 1;
         }
 
         await loadPhotos();
 
-        setActiveTab(
+        switchTab(
           "sent"
         );
 
         alert(
           `${successCount}件をBoxへ送信しました。`
         );
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.error(
           error
         );
@@ -805,8 +820,7 @@ function App() {
     };
 
   /*
-   * 未送信/送信済み画面の
-   * 左右スワイプ
+   * タブスワイプ開始
    */
   const handlePageTouchStart =
     (
@@ -827,6 +841,9 @@ function App() {
         touch.clientY;
     };
 
+  /*
+   * タブスワイプ終了
+   */
   const handlePageTouchEnd =
     (
       event:
@@ -865,11 +882,10 @@ function App() {
 
       /*
        * 縦スクロールを
-       * スワイプと誤認しない。
+       * 横スワイプと誤認しない
        */
       if (
-        Math.abs(dx) <
-          65 ||
+        Math.abs(dx) < 65 ||
         Math.abs(dx) <=
           Math.abs(dy) *
             1.2
@@ -886,9 +902,7 @@ function App() {
         activeTab ===
           "pending"
       ) {
-        setActiveTab(
-          "sent"
-        );
+        switchTab("sent");
       }
 
       /*
@@ -900,7 +914,7 @@ function App() {
         activeTab ===
           "sent"
       ) {
-        setActiveTab(
+        switchTab(
           "pending"
         );
       }
@@ -909,8 +923,7 @@ function App() {
   return (
     <main className="container">
       <h1>
-        📷 Box Photo
-        Uploader
+        📷 Box Photo Uploader
       </h1>
 
       <div
@@ -920,9 +933,7 @@ function App() {
             : "network-status offline"
         }
       >
-        <span>
-          ●
-        </span>
+        <span>●</span>
 
         {isOnline
           ? "オンライン：Boxへ送信できます"
@@ -931,8 +942,7 @@ function App() {
 
       <div className="photo-actions">
         <label className="photo-action-button">
-          📷
-          カメラで撮影
+          📷 カメラで撮影
 
           <input
             className="hidden-file-input"
@@ -949,8 +959,7 @@ function App() {
         </label>
 
         <label className="photo-action-button secondary">
-          🖼
-          写真から選択
+          🖼 写真から選択
 
           <input
             className="hidden-file-input"
@@ -973,7 +982,7 @@ function App() {
         </p>
       )}
 
-      {/* 常時見えるタブ */}
+      {/* 常時表示タブ */}
       <div className="sticky-tab-area">
         <div className="photo-tabs">
           <button
@@ -985,7 +994,7 @@ function App() {
                 : ""
             }
             onClick={() =>
-              setActiveTab(
+              switchTab(
                 "pending"
               )
             }
@@ -1007,7 +1016,7 @@ function App() {
                 : ""
             }
             onClick={() =>
-              setActiveTab(
+              switchTab(
                 "sent"
               )
             }
@@ -1067,12 +1076,8 @@ function App() {
             {displayedPhotos.map(
               (photo) => (
                 <StoredPhotoCard
-                  key={
-                    photo.id
-                  }
-                  photo={
-                    photo
-                  }
+                  key={photo.id}
+                  photo={photo}
                   onDelete={
                     handleDelete
                   }
@@ -1114,6 +1119,7 @@ function App() {
         />
       </label>
 
+      {/* 全画面ビューア */}
       {previewPhotoId && (
         <PhotoViewer
           photos={
