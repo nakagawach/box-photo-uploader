@@ -48,7 +48,7 @@ label {
 }
 
 .container {
-  touch-action: pan-y;
+  touch-action: auto;
 
   width: calc(100% - 20px);
   max-width: 680px;
