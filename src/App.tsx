@@ -7,10 +7,13 @@ import {
 
 import type {
   ChangeEvent,
-  TouchEvent,
 } from "react";
 
 import "./App.css";
+
+import {
+  checkForPwaUpdate,
+} from "./pwa";
 
 import StoredPhotoCard
   from "./components/StoredPhotoCard";
@@ -36,8 +39,6 @@ type ActiveTab =
 
 const MAKE_WEBHOOK_URL =
   "YOUR_CURRENT_MAKE_WEBHOOK_URL";
-
-const TAB_ANIMATION_MS = 220;
 
 function createId(): string {
   if (
@@ -367,26 +368,10 @@ function App() {
     useState(false);
 
   const [
-    tabAnimationClass,
-    setTabAnimationClass,
-  ] =
-    useState("");
-
-  const [
     isRestoringScroll,
     setIsRestoringScroll,
   ] =
     useState(false);
-
-  const tabTouchStartX =
-    useRef<number | null>(
-      null
-    );
-
-  const tabTouchStartY =
-    useRef<number | null>(
-      null
-    );
 
   const scrollMemory =
     useRef<
@@ -644,26 +629,11 @@ function App() {
         true
       );
 
-      setTabAnimationClass(
-        nextTab === "sent"
-          ? "slide-left"
-          : "slide-right"
-      );
+      restoreTabRef.current =
+        nextTab;
 
-      window.setTimeout(
-        () => {
-          restoreTabRef.current =
-            nextTab;
-
-          setActiveTab(
-            nextTab
-          );
-
-          setTabAnimationClass(
-            ""
-          );
-        },
-        TAB_ANIMATION_MS
+      setActiveTab(
+        nextTab
       );
     };
 
@@ -683,8 +653,21 @@ function App() {
         );
 
         /*
-         * StoredPhotoCardを一度アンマウントし、
-         * Object URLも作り直させます。
+         * ① まずPWAの最新版を確認。
+         *
+         * 新しいService Workerが見つかった場合は、
+         * vite-plugin-pwaのautoUpdateにより
+         * 新版へ切り替わり、ページが再読込される場合があります。
+         */
+        const pwaUpdateFound =
+          await checkForPwaUpdate();
+
+        /*
+         * ② PWA更新が無い場合でも、
+         * IndexedDBから写真一覧を読み直します。
+         *
+         * 一度カードをアンマウントすることで
+         * BlobのObject URLも作り直します。
          */
         setPhotos([]);
 
@@ -697,13 +680,45 @@ function App() {
         );
 
         await loadPhotos();
+
+        if (
+          pwaUpdateFound
+        ) {
+          console.log(
+            "新しいPWAを検出しました。更新を適用します。"
+          );
+        }
       } catch (error) {
         console.error(
           error
         );
 
+        /*
+         * PWA更新確認に失敗しても、
+         * 写真一覧の再読み込みは試します。
+         */
+        try {
+          setPhotos([]);
+
+          await new Promise<void>(
+            (resolve) => {
+              requestAnimationFrame(
+                () => resolve()
+              );
+            }
+          );
+
+          await loadPhotos();
+        } catch (
+          reloadError
+        ) {
+          console.error(
+            reloadError
+          );
+        }
+
         setErrorMessage(
-          "写真一覧の再読み込みに失敗しました。"
+          "更新処理に失敗しました。通信状態を確認してください。"
         );
       } finally {
         setIsRefreshing(
@@ -961,95 +976,6 @@ function App() {
       }
     };
 
-  const handlePageTouchStart =
-    (
-      event:
-        TouchEvent<HTMLDivElement>
-    ) => {
-      const touch =
-        event.touches[0];
-
-      if (!touch) {
-        return;
-      }
-
-      tabTouchStartX.current =
-        touch.clientX;
-
-      tabTouchStartY.current =
-        touch.clientY;
-    };
-
-  const handlePageTouchEnd =
-    (
-      event:
-        TouchEvent<HTMLDivElement>
-    ) => {
-      if (
-        tabTouchStartX.current ===
-        null
-      ) {
-        return;
-      }
-
-      const touch =
-        event.changedTouches[0];
-
-      if (!touch) {
-        return;
-      }
-
-      const dx =
-        touch.clientX -
-        tabTouchStartX.current;
-
-      const dy =
-        touch.clientY -
-        (
-          tabTouchStartY.current ??
-          touch.clientY
-        );
-
-      tabTouchStartX.current =
-        null;
-
-      tabTouchStartY.current =
-        null;
-
-      /*
-       * 縦スクロールを優先。
-       * 横方向が明確なときだけタブ切替。
-       */
-      if (
-        Math.abs(dx) <
-          70 ||
-        Math.abs(dx) <=
-          Math.abs(dy) *
-            1.25
-      ) {
-        return;
-      }
-
-      if (
-        dx < 0 &&
-        activeTab ===
-          "pending"
-      ) {
-        switchTab(
-          "sent"
-        );
-      }
-
-      if (
-        dx > 0 &&
-        activeTab ===
-          "sent"
-      ) {
-        switchTab(
-          "pending"
-        );
-      }
-    };
 
   return (
     <main className="container">
@@ -1067,8 +993,8 @@ function App() {
           disabled={
             isRefreshing
           }
-          aria-label="写真一覧を再読み込み"
-          title="写真一覧を再読み込み"
+          aria-label="アプリと写真一覧を更新"
+          title="アプリと写真一覧を更新"
         >
           {isRefreshing
             ? "…"
@@ -1188,18 +1114,9 @@ function App() {
 
       <div
         className={
-          `swipe-page ${tabAnimationClass}` +
-          (
-            isRestoringScroll
-              ? " restoring-scroll"
-              : ""
-          )
-        }
-        onTouchStart={
-          handlePageTouchStart
-        }
-        onTouchEnd={
-          handlePageTouchEnd
+          isRestoringScroll
+            ? "swipe-page restoring-scroll"
+            : "swipe-page"
         }
       >
         {activeTab ===
@@ -1259,12 +1176,6 @@ function App() {
           </div>
         )}
 
-        <p className="swipe-guide">
-          {activeTab ===
-          "pending"
-            ? "← スワイプで送信済み"
-            : "スワイプで未送信 →"}
-        </p>
       </div>
 
       <label className="floating-camera-button">

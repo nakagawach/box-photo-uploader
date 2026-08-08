@@ -40,6 +40,7 @@ button,
 label {
   -webkit-tap-highlight-color:
     transparent;
+  touch-action: manipulation;
 }
 
 .container {
@@ -313,56 +314,12 @@ h1 {
 
 /*
  * 縦スクロールはブラウザの1本だけ。
- * touch-actionをいじり過ぎないので
- * Androidの縦スクロールを邪魔しません。
+ * 未送信/送信済みはボタンだけで切り替えます。
  */
 .swipe-page {
   min-height: 40vh;
-
-  transition:
-    transform
-      220ms
-      cubic-bezier(
-        .22,
-        .61,
-        .36,
-        1
-      ),
-    opacity
-      160ms
-      ease;
-
-  will-change:
-    transform,
-    opacity;
 }
 
-.swipe-page.slide-left {
-  transform:
-    translate3d(
-      -12%,
-      0,
-      0
-    );
-
-  opacity: 0;
-}
-
-.swipe-page.slide-right {
-  transform:
-    translate3d(
-      12%,
-      0,
-      0
-    );
-
-  opacity: 0;
-}
-
-/*
- * スクロール復元中は一覧を見せない。
- * 復元後の正しい位置から表示します。
- */
 .swipe-page.restoring-scroll {
   visibility: hidden;
 }
@@ -395,16 +352,6 @@ h1 {
   padding: 40px 0;
 
   color: #687582;
-
-  text-align: center;
-}
-
-.swipe-guide {
-  margin-top: 20px;
-
-  color: #8a949f;
-
-  font-size: 12px;
 
   text-align: center;
 }
