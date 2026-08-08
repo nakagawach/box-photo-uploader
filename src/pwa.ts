@@ -1,100 +1,128 @@
-import {
-    registerSW,
-  } from "virtual:pwa-register";
-  
-  let registration:
-    ServiceWorkerRegistration |
-    undefined;
-  
-  /*
-   * vite.config.ts の
-   * registerType: "autoUpdate"
-   * と組み合わせて使います。
-   *
-   * immediate: true にすることで、
-   * PWA起動時からService Workerを登録し、
-   * 新版が検出されたときの自動更新も有効にします。
-   */
-  const updateSW =
-    registerSW({
-      immediate: true,
-  
-      onRegisteredSW(
-        _swUrl,
-        swRegistration
-      ) {
-        registration =
-          swRegistration;
-      },
-  
-      onRegisterError(
-        error
-      ) {
-        console.error(
-          "Service Worker registration error:",
-          error
-        );
-      },
-    });
-  
-  function waitForInstallingWorker(
-    worker: ServiceWorker
+/*
+ * PWA更新確認をブラウザ標準のService Worker APIだけで行います。
+ *
+ * vite-plugin-pwa の virtual:pwa-register を使わないため、
+ * TypeScriptの仮想モジュール型エラーが発生しません。
+ *
+ * vite.config.ts はこれまでどおり
+ * registerType: "autoUpdate"
+ * のままでOKです。
+ */
+
+function waitForControllerChange(
+    timeoutMs = 5000
   ): Promise<boolean> {
-    return new Promise(
-      (resolve) => {
-        const timeout =
-          window.setTimeout(
-            () => {
-              resolve(false);
-            },
-            5000
+    return new Promise((resolve) => {
+      let finished = false;
+  
+      const finish = (
+        changed: boolean
+      ) => {
+        if (finished) {
+          return;
+        }
+  
+        finished = true;
+  
+        navigator.serviceWorker
+          .removeEventListener(
+            "controllerchange",
+            handleControllerChange
           );
   
+        window.clearTimeout(
+          timer
+        );
+  
+        resolve(changed);
+      };
+  
+      const handleControllerChange =
+        () => {
+          finish(true);
+        };
+  
+      const timer =
+        window.setTimeout(
+          () => {
+            finish(false);
+          },
+          timeoutMs
+        );
+  
+      navigator.serviceWorker
+        .addEventListener(
+          "controllerchange",
+          handleControllerChange
+        );
+    });
+  }
+  
+  function waitForWorkerInstalled(
+    worker: ServiceWorker,
+    timeoutMs = 5000
+  ): Promise<void> {
+    return new Promise(
+      (resolve) => {
+        let finished = false;
+  
+        const finish =
+          () => {
+            if (finished) {
+              return;
+            }
+  
+            finished = true;
+  
+            worker.removeEventListener(
+              "statechange",
+              handleStateChange
+            );
+  
+            window.clearTimeout(
+              timer
+            );
+  
+            resolve();
+          };
+  
         const handleStateChange =
-          async () => {
+          () => {
             if (
               worker.state ===
                 "installed" ||
               worker.state ===
-                "activated"
-            ) {
-              window.clearTimeout(
-                timeout
-              );
-  
-              resolve(true);
-            }
-  
-            if (
+                "activated" ||
               worker.state ===
-              "redundant"
+                "redundant"
             ) {
-              window.clearTimeout(
-                timeout
-              );
-  
-              resolve(false);
+              finish();
             }
           };
   
+        const timer =
+          window.setTimeout(
+            finish,
+            timeoutMs
+          );
+  
         worker.addEventListener(
           "statechange",
-          () => {
-            void handleStateChange();
-          }
+          handleStateChange
         );
   
-        void handleStateChange();
+        handleStateChange();
       }
     );
   }
   
   /*
-   * 右上の更新ボタンから呼び出します。
+   * true:
+   *   更新処理中にService Workerのcontrollerが切り替わった
+   *   または新Workerを検出した
    *
-   * 戻り値:
-   * true  = 新しいService Workerを検出
-   * false = 新版なし / SW未登録 / オフライン
+   * false:
+   *   オフライン / SW未登録 / 明確な新版を検出しなかった
    */
   export async function checkForPwaUpdate():
     Promise<boolean> {
@@ -105,67 +133,87 @@ import {
       return false;
     }
   
-    const currentRegistration =
-      registration ??
-      (
-        await navigator.serviceWorker
-          .getRegistration()
-      );
+    const registration =
+      await navigator.serviceWorker
+        .getRegistration();
   
-    if (
-      !currentRegistration
-    ) {
+    if (!registration) {
       return false;
     }
   
-    registration =
-      currentRegistration;
-  
     /*
-     * registration.update() は
-     * Service Workerスクリプトをサーバへ確認します。
+     * controllerchange監視はupdate()より先に開始します。
+     * registerType:autoUpdate のSWが即座にactivateしても
+     * イベントを取りこぼさないためです。
      */
-    await currentRegistration
-      .update();
+    const controllerChangedPromise =
+      waitForControllerChange();
   
-    /*
-     * すでにwaiting中の新版があれば即適用。
-     */
+    const beforeInstalling =
+      registration.installing;
+  
+    const beforeWaiting =
+      registration.waiting;
+  
+    await registration.update();
+  
+    const worker =
+      registration.installing;
+  
     if (
-      currentRegistration
-        .waiting
+      worker &&
+      worker !==
+        beforeInstalling
     ) {
-      await updateSW(true);
+      await waitForWorkerInstalled(
+        worker
+      );
+    }
+  
+    const controllerChanged =
+      await Promise.race([
+        controllerChangedPromise,
+  
+        new Promise<boolean>(
+          (resolve) => {
+            window.setTimeout(
+              () => resolve(false),
+              1200
+            );
+          }
+        ),
+      ]);
+  
+    if (controllerChanged) {
+      /*
+       * 新SWがcontrollerになったので、
+       * 新しいJS/CSSを確実に読むため再読込。
+       */
+      window.location.reload();
   
       return true;
     }
   
     /*
-     * update()直後にinstallingになった新版があれば、
-     * installedまで待ってから適用します。
+     * waiting/installingが新たに現れた場合も
+     * 「新版を検出した」とみなします。
+     *
+     * autoUpdate設定では通常skipWaitingされるため、
+     * 多くの場合はcontrollerchange→reloadへ進みます。
      */
-    const installing =
-      currentRegistration
-        .installing;
+    const updateDetected =
+      (
+        registration.waiting &&
+        registration.waiting !==
+          beforeWaiting
+      ) ||
+      (
+        registration.installing &&
+        registration.installing !==
+          beforeInstalling
+      );
   
-    if (
-      installing
-    ) {
-      const installed =
-        await waitForInstallingWorker(
-          installing
-        );
-  
-      if (
-        installed &&
-        currentRegistration
-          .waiting
-      ) {
-        await updateSW(true);
-      }
-  
-      return installed;
-    }
-  
-    return false;
+    return Boolean(
+      updateDetected
+    );
   }

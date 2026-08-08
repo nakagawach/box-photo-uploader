@@ -389,37 +389,6 @@ function App() {
       null
     );
 
-  const stickyTabRef =
-    useRef<HTMLDivElement | null>(
-      null
-    );
-
-  /*
-   * Androidでタブ切替後にstickyヘッダーが少し見切れる場合があるため、
-   * stickyタブの高さを使って復元位置を補正します。
-   */
-  const getStickyTopSafeY =
-    () => {
-      const sticky =
-        stickyTabRef.current;
-
-      if (!sticky) {
-        return 0;
-      }
-
-      const rect =
-        sticky.getBoundingClientRect();
-
-      /*
-       * stickyが上端を越えて見切れないよう、
-       * 現在位置が負ならその分だけ下へ補正。
-       */
-      return Math.max(
-        0,
-        -rect.top
-      );
-    };
-
   const loadPhotos =
     async () => {
       const saved =
