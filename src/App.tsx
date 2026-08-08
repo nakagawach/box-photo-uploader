@@ -384,6 +384,18 @@ function App() {
       sent: 0,
     });
 
+  /*
+   * Androidではstate更新とscrollイベントのタイミングがずれることがあるため、
+   * 判定用にはrefも併用します。
+   */
+  const activeTabRef =
+    useRef<ActiveTab>(
+      "pending"
+    );
+
+  const restoringScrollRef =
+    useRef(false);
+
   const restoreTabRef =
     useRef<ActiveTab | null>(
       null
@@ -460,6 +472,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    activeTabRef.current =
+      activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
     const online =
       () => {
         setIsOnline(true);
@@ -495,19 +512,20 @@ function App() {
 
   /*
    * 現在のタブのスクロール位置を記憶。
-   * windowだけを使うので二重スクロールは発生しません。
+   * Androidで切替中のscrollイベントが前タブの保存値を上書きしないよう、
+   * restoringScrollRefで同期的にロックします。
    */
   useEffect(() => {
     const remember =
       () => {
         if (
-          isRestoringScroll
+          restoringScrollRef.current
         ) {
           return;
         }
 
         scrollMemory.current[
-          activeTab
+          activeTabRef.current
         ] =
           window.scrollY;
       };
@@ -526,16 +544,14 @@ function App() {
         remember
       );
     };
-  }, [
-    activeTab,
-    isRestoringScroll,
-  ]);
+  }, []);
 
   /*
-   * タブ切替後、一覧を一瞬だけ隠したまま
-   * 保存位置へ戻してから表示します。
+   * タブ切替後、一覧を隠したまま保存位置へ復元します。
    *
-   * 「違う位置が一瞬見える」ことを防ぎます。
+   * Androidでは画像の高さ確定前にscrollToすると、
+   * その時点の最大スクロール量へ丸められてしまうことがあります。
+   * そのため画像decode後にも再度同じ位置へ補正します。
    */
   useLayoutEffect(() => {
     if (
@@ -553,28 +569,106 @@ function App() {
         activeTab
       ];
 
-    /*
-     * stickyの位置はブラウザへ完全に任せます。
-     * Android Chrome/PWAの可変ブラウザUIと競合するため、
-     * getBoundingClientRect / scrollByによる手動補正はしません。
-     */
-    window.scrollTo({
-      top: targetY,
-      behavior: "auto",
-    });
+    let cancelled =
+      false;
 
-    requestAnimationFrame(
+    const restore =
       () => {
+        if (cancelled) {
+          return;
+        }
+
         window.scrollTo({
           top: targetY,
           behavior: "auto",
         });
+      };
 
-        setIsRestoringScroll(
-          false
+    const finish =
+      async () => {
+        restore();
+
+        await new Promise<void>(
+          (resolve) => {
+            requestAnimationFrame(
+              () =>
+                requestAnimationFrame(
+                  () => resolve()
+                )
+            );
+          }
         );
-      }
-    );
+
+        restore();
+
+        /*
+         * 表示中一覧の画像が読み込まれて高さが確定するのを待つ。
+         */
+        const images =
+          Array.from(
+            document.querySelectorAll<
+              HTMLImageElement
+            >(
+              ".swipe-page img"
+            )
+          );
+
+        await Promise.race([
+          Promise.all(
+            images.map(
+              async (image) => {
+                if (
+                  image.complete &&
+                  image.naturalWidth > 0
+                ) {
+                  return;
+                }
+
+                try {
+                  await image.decode();
+                } catch {
+                  // decode失敗でも続行
+                }
+              }
+            )
+          ),
+          new Promise<void>(
+            (resolve) => {
+              window.setTimeout(
+                resolve,
+                350
+              );
+            }
+          ),
+        ]);
+
+        restore();
+
+        await new Promise<void>(
+          (resolve) => {
+            requestAnimationFrame(
+              () => resolve()
+            );
+          }
+        );
+
+        restore();
+
+        if (!cancelled) {
+          restoringScrollRef.current =
+            false;
+
+          setIsRestoringScroll(
+            false
+          );
+        }
+      };
+
+      void finish();
+
+      return () => {
+        cancelled = true;
+      };
   }, [activeTab]);
 
   const switchTab =
@@ -582,23 +676,36 @@ function App() {
       nextTab:
         ActiveTab
     ) => {
+      const currentTab =
+        activeTabRef.current;
+
       if (
         nextTab ===
-        activeTab
+        currentTab
       ) {
         return;
       }
 
+      /*
+       * state更新より先に同期的に保存・ロック。
+       * これでAndroidの途中scrollイベントに上書きされません。
+       */
       scrollMemory.current[
-        activeTab
+        currentTab
       ] =
         window.scrollY;
+
+      restoringScrollRef.current =
+        true;
 
       setIsRestoringScroll(
         true
       );
 
       restoreTabRef.current =
+        nextTab;
+
+      activeTabRef.current =
         nextTab;
 
       setActiveTab(
@@ -755,12 +862,47 @@ function App() {
 
         await loadPhotos();
 
+        /*
+         * 新しく撮影/選択した写真を保存したら、
+         * 未送信画面は必ず一番上から表示します。
+         */
+        scrollMemory.current.pending =
+          0;
+
         if (
-          activeTab !==
+          activeTabRef.current !==
           "pending"
         ) {
           switchTab(
             "pending"
+          );
+        } else {
+          restoringScrollRef.current =
+            true;
+
+          setIsRestoringScroll(
+            true
+          );
+
+          window.scrollTo({
+            top: 0,
+            behavior: "auto",
+          });
+
+          requestAnimationFrame(
+            () => {
+              window.scrollTo({
+                top: 0,
+                behavior: "auto",
+              });
+
+              restoringScrollRef.current =
+                false;
+
+              setIsRestoringScroll(
+                false
+              );
+            }
           );
         }
       } catch (error) {

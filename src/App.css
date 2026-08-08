@@ -18,11 +18,15 @@
 }
 
 html {
+  overscroll-behavior-x: none;
+
   min-height: 100%;
   background: #f3f5f7;
 }
 
 body {
+  overscroll-behavior-x: none;
+
   min-width: 320px;
   min-height: 100vh;
 
@@ -44,6 +48,8 @@ label {
 }
 
 .container {
+  touch-action: pan-y;
+
   width: calc(100% - 20px);
   max-width: 680px;
 
