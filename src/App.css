@@ -69,6 +69,48 @@ h1 {
   text-align: center;
 }
 
+.title-row {
+  position: relative;
+}
+
+.refresh-button {
+  position: absolute;
+
+  top: 0;
+  right: 0;
+
+  display: grid;
+  place-items: center;
+
+  width: 38px;
+  height: 38px;
+
+  padding: 0;
+
+  border:
+    1px solid #c8d0d8;
+
+  border-radius: 50%;
+
+  background: #fff;
+  color: #1769aa;
+
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1;
+
+  cursor: pointer;
+
+  box-shadow:
+    0 2px 7px
+    rgb(0 0 0 / 8%);
+}
+
+.refresh-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .network-status {
   display: flex;
 
@@ -189,6 +231,12 @@ h1 {
   top: 0;
 
   z-index: 100;
+
+  /*
+   * Android Chromeでsticky上端が描画境界へ潜るのを抑える。
+   */
+  transform: translateZ(0);
+  backface-visibility: hidden;
 
   padding:
     8px
@@ -987,6 +1035,13 @@ h1 {
 
   h1 {
     font-size: 22px;
+  }
+
+  .refresh-button {
+    width: 35px;
+    height: 35px;
+
+    font-size: 21px;
   }
 
   .photo-action-button {

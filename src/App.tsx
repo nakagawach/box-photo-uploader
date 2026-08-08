@@ -361,6 +361,12 @@ function App() {
     useState("");
 
   const [
+    isRefreshing,
+    setIsRefreshing,
+  ] =
+    useState(false);
+
+  const [
     tabAnimationClass,
     setTabAnimationClass,
   ] =
@@ -397,6 +403,37 @@ function App() {
     useRef<ActiveTab | null>(
       null
     );
+
+  const stickyTabRef =
+    useRef<HTMLDivElement | null>(
+      null
+    );
+
+  /*
+   * Androidでタブ切替後にstickyヘッダーが少し見切れる場合があるため、
+   * stickyタブの高さを使って復元位置を補正します。
+   */
+  const getStickyTopSafeY =
+    () => {
+      const sticky =
+        stickyTabRef.current;
+
+      if (!sticky) {
+        return 0;
+      }
+
+      const rect =
+        sticky.getBoundingClientRect();
+
+      /*
+       * stickyが上端を越えて見切れないよう、
+       * 現在位置が負ならその分だけ下へ補正。
+       */
+      return Math.max(
+        0,
+        -rect.top
+      );
+    };
 
   const loadPhotos =
     async () => {
@@ -562,14 +599,7 @@ function App() {
         activeTab
       ];
 
-    window.scrollTo({
-      top:
-        targetY,
-      behavior:
-        "auto",
-    });
-
-    requestAnimationFrame(
+    const restore =
       () => {
         window.scrollTo({
           top:
@@ -578,8 +608,41 @@ function App() {
             "auto",
         });
 
-        setIsRestoringScroll(
-          false
+        /*
+         * Android Chromeでは横スワイプ直後に
+         * sticky要素の計算が1フレーム遅れることがあります。
+         * タブ上端が画面外へ潜った場合だけ補正。
+         */
+        const correction =
+          getStickyTopSafeY();
+
+        if (
+          correction >
+          0
+        ) {
+          window.scrollBy({
+            top:
+              -correction,
+            behavior:
+              "auto",
+          });
+        }
+      };
+
+    restore();
+
+    requestAnimationFrame(
+      () => {
+        restore();
+
+        requestAnimationFrame(
+          () => {
+            restore();
+
+            setIsRestoringScroll(
+              false
+            );
+          }
         );
       }
     );
@@ -627,6 +690,51 @@ function App() {
         },
         TAB_ANIMATION_MS
       );
+    };
+
+  const handleRefresh =
+    async () => {
+      if (isRefreshing) {
+        return;
+      }
+
+      try {
+        setIsRefreshing(
+          true
+        );
+
+        setErrorMessage(
+          ""
+        );
+
+        /*
+         * StoredPhotoCardを一度アンマウントし、
+         * Object URLも作り直させます。
+         */
+        setPhotos([]);
+
+        await new Promise<void>(
+          (resolve) => {
+            requestAnimationFrame(
+              () => resolve()
+            );
+          }
+        );
+
+        await loadPhotos();
+      } catch (error) {
+        console.error(
+          error
+        );
+
+        setErrorMessage(
+          "写真一覧の再読み込みに失敗しました。"
+        );
+      } finally {
+        setIsRefreshing(
+          false
+        );
+      }
     };
 
   const handlePhotoChange =
@@ -970,9 +1078,28 @@ function App() {
 
   return (
     <main className="container">
-      <h1>
-        📷 Box Photo Uploader
-      </h1>
+      <div className="title-row">
+        <h1>
+          📷 Box Photo Uploader
+        </h1>
+
+        <button
+          type="button"
+          className="refresh-button"
+          onClick={() =>
+            void handleRefresh()
+          }
+          disabled={
+            isRefreshing
+          }
+          aria-label="写真一覧を再読み込み"
+          title="写真一覧を再読み込み"
+        >
+          {isRefreshing
+            ? "…"
+            : "↻"}
+        </button>
+      </div>
 
       <div
         className={
@@ -1040,7 +1167,12 @@ function App() {
        * ここだけsticky。
        * タイトルや撮影ボタンは普通に上へ消えます。
        */}
-      <div className="sticky-tab-area">
+      <div
+        ref={
+          stickyTabRef
+        }
+        className="sticky-tab-area"
+      >
         <div className="photo-tabs">
           <button
             type="button"
