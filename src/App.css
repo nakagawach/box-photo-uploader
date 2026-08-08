@@ -53,7 +53,7 @@ label {
   padding:
     20px
     12px
-    0;
+    120px;
 }
 
 h1 {
@@ -68,10 +68,6 @@ h1 {
 
   text-align: center;
 }
-
-/* =========================
-   ネットワーク
-   ========================= */
 
 .network-status {
   display: flex;
@@ -107,10 +103,6 @@ h1 {
   color: #8d5a00;
 }
 
-/* =========================
-   撮影
-   ========================= */
-
 .photo-actions {
   display: grid;
 
@@ -141,7 +133,6 @@ h1 {
   font-weight: 700;
 
   cursor: pointer;
-  user-select: none;
 
   touch-action: manipulation;
 }
@@ -191,10 +182,7 @@ h1 {
   font-weight: 700;
 }
 
-/* =========================
-   ★未送信・送信済みだけ固定
-   ========================= */
-
+/* 未送信 / 送信済みだけ固定 */
 .sticky-tab-area {
   position: sticky;
 
@@ -261,7 +249,8 @@ h1 {
   min-width: 24px;
   height: 24px;
 
-  padding: 0 6px;
+  padding:
+    0 6px;
 
   border-radius: 999px;
 
@@ -280,72 +269,60 @@ h1 {
     rgb(0 0 0 / 10%);
 }
 
-/* =========================
-   ★横スライドタブ本体
+/*
+ * 縦スクロールはブラウザの1本だけ。
+ * touch-actionをいじり過ぎないので
+ * Androidの縦スクロールを邪魔しません。
+ */
+.swipe-page {
+  min-height: 40vh;
 
-   縦スクロールはブラウザの1本だけ。
-   内側スクロールは作らない。
-
-   2つのpaneは横並びでDOMに常駐。
-   viewportの高さはJSで高い方へ合わせるので、
-   送信済み0件へ切り替えてもページ高が急に縮まない。
-   ========================= */
-
-.tab-viewport {
-  position: relative;
-
-  width: 100%;
-
-  min-height: 420px;
-
-  overflow-x: hidden;
-  overflow-y: visible;
-
-  touch-action: pan-y;
-
-  background: #f3f5f7;
-}
-
-.tab-track {
-  position: absolute;
-
-  top: 0;
-  left: 0;
-
-  display: flex;
-
-  align-items: flex-start;
+  transition:
+    transform
+      220ms
+      cubic-bezier(
+        .22,
+        .61,
+        .36,
+        1
+      ),
+    opacity
+      160ms
+      ease;
 
   will-change:
-    transform;
+    transform,
+    opacity;
 }
 
-.tab-pane {
-  flex: 0 0 auto;
-
-  /*
-   * ★内側スクロールを完全に禁止。
-   * 右側のスクロールバーはブラウザの1本だけになります。
-   */
-  overflow: visible;
-
-  background: #f3f5f7;
-}
-
-.tab-pane-inner {
-  width: 100%;
-
-  min-height: 420px;
-
-  padding:
-    8px
-    0
-    calc(
-      110px +
-      env(
-        safe-area-inset-bottom
-      )
+.swipe-page.slide-left {
+  transform:
+    translate3d(
+      -12%,
+      0,
+      0
     );
+
+  opacity: 0;
+}
+
+.swipe-page.slide-right {
+  transform:
+    translate3d(
+      12%,
+      0,
+      0
+    );
+
+  opacity: 0;
+}
+
+/*
+ * スクロール復元中は一覧を見せない。
+ * 復元後の正しい位置から表示します。
+ */
+.swipe-page.restoring-scroll {
+  visibility: hidden;
 }
 
 .upload-button {
@@ -354,7 +331,7 @@ h1 {
   min-height: 50px;
 
   margin:
-    0
+    8px
     0
     18px;
 
@@ -389,10 +366,6 @@ h1 {
 
   text-align: center;
 }
-
-/* =========================
-   カード
-   ========================= */
 
 .photo-list {
   display: flex;
@@ -461,10 +434,6 @@ h1 {
 
   font-size: 12px;
 }
-
-/* =========================
-   タグ
-   ========================= */
 
 .tag-section {
   padding:
@@ -542,10 +511,6 @@ h1 {
 
   color: #7c8792;
 }
-
-/* =========================
-   写真情報
-   ========================= */
 
 .photo-information {
   padding:
@@ -631,10 +596,6 @@ h1 {
   font-weight: 700;
 }
 
-/* =========================
-   右下カメラ
-   ========================= */
-
 .floating-camera-button {
   position: fixed;
 
@@ -675,15 +636,9 @@ h1 {
     rgb(0 0 0 / 30%);
 
   cursor: pointer;
-  user-select: none;
-
-  touch-action: manipulation;
 }
 
-/* =========================
-   全画面ビューア
-   v3の仕様を維持
-   ========================= */
+/* PhotoViewer styles */
 
 .viewer {
   position: fixed;
@@ -765,8 +720,6 @@ h1 {
   color: #fff;
 
   font-size: 29px;
-
-  cursor: pointer;
 }
 
 .viewer-title {
@@ -814,8 +767,6 @@ h1 {
 
   font-size: 13px;
   font-weight: 700;
-
-  cursor: pointer;
 }
 
 .viewer-zoom button:disabled {
@@ -833,8 +784,6 @@ h1 {
   background: #050505;
 
   touch-action: none;
-
-  cursor: default;
 }
 
 .viewer-stage.zoomed {
@@ -889,9 +838,6 @@ h1 {
 
   -webkit-user-drag:
     none;
-
-  backface-visibility:
-    hidden;
 }
 
 .viewer-image {
@@ -935,8 +881,6 @@ h1 {
 
   transform:
     translateY(-50%);
-
-  cursor: pointer;
 }
 
 .viewer-arrow-left {
@@ -1026,10 +970,6 @@ h1 {
   font-size: 10px;
 }
 
-/* =========================
-   スマホ
-   ========================= */
-
 @media (
   max-width: 520px
 ) {
@@ -1042,7 +982,7 @@ h1 {
     padding:
       12px
       6px
-      0;
+      110px;
   }
 
   h1 {
@@ -1059,10 +999,6 @@ h1 {
     font-size: 13px;
   }
 
-  .tab-viewport {
-    min-height: 360px;
-  }
-
   .viewer-header {
     grid-template-columns:
       40px
@@ -1070,9 +1006,6 @@ h1 {
       auto;
 
     gap: 5px;
-
-    padding-left: 7px;
-    padding-right: 7px;
   }
 
   .viewer-close {
