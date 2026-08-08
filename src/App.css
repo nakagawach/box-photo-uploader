@@ -53,7 +53,7 @@ label {
   padding:
     20px
     12px
-    120px;
+    0;
 }
 
 h1 {
@@ -281,21 +281,71 @@ h1 {
 }
 
 /* =========================
-   タブ本文
+   ★横スライドタブ本体
+
+   縦スクロールはブラウザの1本だけ。
+   内側スクロールは作らない。
+
+   2つのpaneは横並びでDOMに常駐。
+   viewportの高さはJSで高い方へ合わせるので、
+   送信済み0件へ切り替えてもページ高が急に縮まない。
    ========================= */
 
-.swipe-page {
-  min-height: 50vh;
+.tab-viewport {
+  position: relative;
+
+  width: 100%;
+
+  min-height: 420px;
+
+  overflow-x: hidden;
+  overflow-y: visible;
 
   touch-action: pan-y;
+
+  background: #f3f5f7;
 }
 
-/*
- * タブ切替時は、正しいスクロール位置を復元するまで一覧だけ隠します。
- * 「一瞬違う位置が見えてから正しい位置へ飛ぶ」現象を防止します。
- */
-.swipe-page.restoring-scroll {
-  visibility: hidden;
+.tab-track {
+  position: absolute;
+
+  top: 0;
+  left: 0;
+
+  display: flex;
+
+  align-items: flex-start;
+
+  will-change:
+    transform;
+}
+
+.tab-pane {
+  flex: 0 0 auto;
+
+  /*
+   * ★内側スクロールを完全に禁止。
+   * 右側のスクロールバーはブラウザの1本だけになります。
+   */
+  overflow: visible;
+
+  background: #f3f5f7;
+}
+
+.tab-pane-inner {
+  width: 100%;
+
+  min-height: 420px;
+
+  padding:
+    8px
+    0
+    calc(
+      110px +
+      env(
+        safe-area-inset-bottom
+      )
+    );
 }
 
 .upload-button {
@@ -304,7 +354,7 @@ h1 {
   min-height: 50px;
 
   margin:
-    8px
+    0
     0
     18px;
 
@@ -632,6 +682,7 @@ h1 {
 
 /* =========================
    全画面ビューア
+   v3の仕様を維持
    ========================= */
 
 .viewer {
@@ -781,9 +832,6 @@ h1 {
 
   background: #050505;
 
-  /*
-   * JSでPointer Eventsを処理。
-   */
   touch-action: none;
 
   cursor: default;
@@ -797,12 +845,6 @@ h1 {
   cursor: grabbing;
 }
 
-/*
- * [前][現在][次] 3枚を横並び。
- *
- * スワイプ中はこのトラックが
- * 指の移動距離にそのまま追従します。
- */
 .viewer-track {
   position: absolute;
 
@@ -864,10 +906,6 @@ h1 {
   pointer-events: none;
 }
 
-/*
- * ★ステージの外側の兄弟要素として配置。
- * 写真のPointer Captureから独立。
- */
 .viewer-arrow {
   position: absolute;
 
@@ -1004,7 +1042,7 @@ h1 {
     padding:
       12px
       6px
-      110px;
+      0;
   }
 
   h1 {
@@ -1019,6 +1057,10 @@ h1 {
       5px;
 
     font-size: 13px;
+  }
+
+  .tab-viewport {
+    min-height: 360px;
   }
 
   .viewer-header {

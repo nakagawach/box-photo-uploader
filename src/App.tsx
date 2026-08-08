@@ -1,13 +1,13 @@
 import {
+  useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 
 import type {
   ChangeEvent,
-  TouchEvent,
+  PointerEvent as ReactPointerEvent,
 } from "react";
 
 import "./App.css";
@@ -34,14 +34,22 @@ type ActiveTab =
   | "pending"
   | "sent";
 
-type ScrollMemory = {
-  scrollY: number;
-  anchorId: string | null;
-  anchorOffset: number;
-};
+type TabGestureMode =
+  | "none"
+  | "pending"
+  | "swipe";
+
+const TAB_SLIDE_DURATION =
+  260;
+
+const TAB_GESTURE_LOCK =
+  12;
+
+const TAB_SWIPE_MIN =
+  60;
 
 /*
- * ★ここだけ、今正常に動いているMake Webhook URLに戻してください。
+ * ★ここだけ、現在正常に動いているMake Webhook URLへ戻してください。
  */
 const MAKE_WEBHOOK_URL =
   "YOUR_CURRENT_MAKE_WEBHOOK_URL";
@@ -417,60 +425,89 @@ function App() {
   ] =
     useState("");
 
+
   /*
-   * タブ切替直後の誤ったスクロール位置を1フレームでも見せないため、
-   * 復元完了まで一覧だけ非表示にします。
+   * タブ下の2画面は横並びのままDOMに常駐させます。
+   * ただし縦スクロールはブラウザ(window)の1本だけです。
+   *
+   * タブごとのwindow.scrollYを記憶し、
+   * 切替中は2画面のうち高い方の高さをviewportへ確保することで、
+   * 「送信済み0件」へ切り替えてもページ高が急に縮まず、
+   * Android ChromeにscrollYを勝手に補正されにくくします。
    */
+  const tabViewportRef =
+    useRef<HTMLDivElement | null>(
+      null
+    );
+
+  const scrollMemoryRef =
+    useRef<Record<ActiveTab, number>>({
+      pending: 0,
+      sent: 0,
+    });
+
   const [
-    isRestoringScroll,
-    setIsRestoringScroll,
+    paneHeights,
+    setPaneHeights,
+  ] =
+    useState({
+      pending: 0,
+      sent: 0,
+    });
+
+  const tabSwitchTargetRef =
+    useRef<ActiveTab | null>(
+      null
+    );
+
+  const [
+    tabViewportWidth,
+    setTabViewportWidth,
+  ] =
+    useState(
+      window.innerWidth
+    );
+
+  const [
+    tabDragX,
+    setTabDragX,
+  ] =
+    useState(0);
+
+  const tabDragXRef =
+    useRef(0);
+
+  const [
+    tabAnimating,
+    setTabAnimating,
   ] =
     useState(false);
 
-  const tabTouchStartX =
+  const tabGestureModeRef =
+    useRef<TabGestureMode>(
+      "none"
+    );
+
+  const tabPointerIdRef =
     useRef<
       number | null
     >(null);
 
-  const tabTouchStartY =
-    useRef<
-      number | null
-    >(null);
-
-  /*
-   * Androidでwindow.scrollYだけ保存すると、
-   * 画像の読み込みによるカード高変化等で位置がずれることがあります。
-   *
-   * そこで
-   * 1. scrollY
-   * 2. 画面上部付近に見えていた写真ID
-   * 3. その写真のviewport内offset
-   * を記憶します。
-   */
-  const scrollMemory =
-    useRef<
-      Record<
-        ActiveTab,
-        ScrollMemory
-      >
-    >({
-      pending: {
-        scrollY: 0,
-        anchorId: null,
-        anchorOffset: 0,
-      },
-
-      sent: {
-        scrollY: 0,
-        anchorId: null,
-        anchorOffset: 0,
-      },
+  const tabStartRef =
+    useRef({
+      x: 0,
+      y: 0,
     });
 
-  const restoreTabRef =
-    useRef<
-      ActiveTab | null
-    >(null);
+  const pendingPaneRef =
+    useRef<HTMLElement | null>(
+      null
+    );
+
+  const sentPaneRef =
+    useRef<HTMLElement | null>(
+      null
+    );
 
   const loadPhotos =
     async () => {
@@ -585,237 +622,182 @@ function App() {
     };
   }, []);
 
-  const saveScrollMemory =
-    (
-      tab:
-        ActiveTab
-    ) => {
-      const cards =
-        Array.from(
-          document.querySelectorAll<
-            HTMLElement
-          >(
-            `[data-tab="${tab}"] [data-photo-id]`
-          )
-        );
+  /*
+   * タブviewport幅を追跡。
+   */
+  const updateTabWidth =
+    useCallback(() => {
+      const width =
+        tabViewportRef.current
+          ?.clientWidth ??
+        window.innerWidth;
 
-      /*
-       * stickyタブのすぐ下付近にいるカードをアンカーに。
-       */
-      const stickyBottom =
-        document
-          .querySelector(
-            ".sticky-tab-area"
-          )
-          ?.getBoundingClientRect()
-          .bottom ??
-        0;
+      setTabViewportWidth(
+        width
+      );
+    }, []);
 
-      let anchor:
-        HTMLElement | undefined;
+  useEffect(() => {
+    updateTabWidth();
 
-      for (
-        const card
-        of cards
-      ) {
-        const rect =
-          card.getBoundingClientRect();
+    window.addEventListener(
+      "resize",
+      updateTabWidth
+    );
 
-        if (
-          rect.bottom >
-          stickyBottom +
-            10
-        ) {
-          anchor =
-            card;
+    return () => {
+      window.removeEventListener(
+        "resize",
+        updateTabWidth
+      );
+    };
+  }, [updateTabWidth]);
 
-          break;
-        }
-      }
+  /*
+   * 両paneの実コンテンツ高を監視します。
+   * viewportは常に高い方へ合わせるため、
+   * 短いタブへ切り替えてもページ全体の高さが急に縮みません。
+   */
+  useEffect(() => {
+    const pending =
+      pendingPaneRef.current;
 
-      scrollMemory.current[
-        tab
-      ] = {
-        scrollY:
-          window.scrollY,
+    const sent =
+      sentPaneRef.current;
 
-        anchorId:
-          anchor
-            ?.dataset
-            .photoId ??
-          null,
+    if (!pending || !sent) {
+      return;
+    }
 
-        anchorOffset:
-          anchor
-            ? anchor
-                .getBoundingClientRect()
-                .top -
-              stickyBottom
-            : 0,
-      };
+    const measure = () => {
+      setPaneHeights({
+        pending:
+          pending.scrollHeight,
+        sent:
+          sent.scrollHeight,
+      });
     };
 
-  const restoreScrollMemory =
-    async (
-      tab:
-        ActiveTab
+    measure();
+
+    const observer =
+      new ResizeObserver(
+        measure
+      );
+
+    observer.observe(
+      pending
+    );
+
+    observer.observe(
+      sent
+    );
+
+    window.addEventListener(
+      "resize",
+      measure
+    );
+
+    return () => {
+      observer.disconnect();
+
+      window.removeEventListener(
+        "resize",
+        measure
+      );
+    };
+  }, [
+    photos,
+    isUploading,
+    isOnline,
+  ]);
+
+  /*
+   * 現在のタブのwindowスクロール位置を常時記憶。
+   * 内側スクロールは使いません。
+   */
+  useEffect(() => {
+    const rememberScroll =
+      () => {
+        if (
+          tabSwitchTargetRef.current
+        ) {
+          return;
+        }
+
+        scrollMemoryRef.current[
+          activeTab
+        ] =
+          window.scrollY;
+      };
+
+    window.addEventListener(
+      "scroll",
+      rememberScroll,
+      {
+        passive: true,
+      }
+    );
+
+    return () => {
+      window.removeEventListener(
+        "scroll",
+        rememberScroll
+      );
+    };
+  }, [activeTab]);
+
+  const restoreWindowScroll =
+    (
+      tab: ActiveTab
     ) => {
-      const memory =
-        scrollMemory.current[
+      const targetY =
+        scrollMemoryRef.current[
           tab
         ];
 
-      /*
-       * 新しいタブの画像レイアウトが確定する前にスクロールすると、
-       * Androidでは一瞬だけ別位置が描画されることがあります。
-       *
-       * 一覧を非表示のまま、画像decodeまたは短いタイムアウトを待ち、
-       * アンカー位置を復元してから表示します。
-       */
-      await new Promise<void>(
-        (resolve) => {
-          requestAnimationFrame(
-            () =>
-              requestAnimationFrame(
-                () => resolve()
-              )
-          );
-        }
-      );
-
-      const images =
-        Array.from(
-          document.querySelectorAll<
-            HTMLImageElement
-          >(
-            `[data-tab="${tab}"] img`
-          )
-        );
-
-      const decodePromise =
-        Promise.all(
-          images.map(
-            async (image) => {
-              if (
-                image.complete &&
-                image.naturalWidth >
-                  0
-              ) {
-                return;
-              }
-
-              try {
-                await image.decode();
-              } catch {
-                // decode非対応/失敗でも続行
-              }
-            }
-          )
-        );
-
-      /*
-       * 画像が多くても長時間真っ白にならないよう上限を設定。
-       */
-      await Promise.race([
-        decodePromise,
-        new Promise<void>(
-          (resolve) => {
-            window.setTimeout(
-              resolve,
-              220
-            );
-          }
-        ),
-      ]);
-
-      const stickyBottom =
-        document
-          .querySelector(
-            ".sticky-tab-area"
-          )
-          ?.getBoundingClientRect()
-          .bottom ??
-        0;
-
-      let restored =
-        false;
-
-      if (
-        memory.anchorId
-      ) {
-        const anchor =
-          document.querySelector<
-            HTMLElement
-          >(
-            `[data-tab="${tab}"] [data-photo-id="${CSS.escape(memory.anchorId)}"]`
-          );
-
-        if (anchor) {
-          const currentOffset =
-            anchor
-              .getBoundingClientRect()
-              .top -
-            stickyBottom;
-
-          window.scrollBy({
+      requestAnimationFrame(
+        () => {
+          window.scrollTo({
             top:
-              currentOffset -
-              memory.anchorOffset,
-
+              targetY,
             behavior:
               "auto",
           });
 
-          restored =
-            true;
-        }
-      }
-
-      if (!restored) {
-        window.scrollTo({
-          top:
-            memory.scrollY,
-
-          behavior:
-            "auto",
-        });
-      }
-
-      /*
-       * 復元後の次フレームで表示。
-       */
-      await new Promise<void>(
-        (resolve) => {
           requestAnimationFrame(
-            () => resolve()
+            () => {
+              window.scrollTo({
+                top:
+                  targetY,
+                behavior:
+                  "auto",
+              });
+
+              tabSwitchTargetRef.current =
+                null;
+            }
           );
         }
       );
+    };
 
-      setIsRestoringScroll(
-        false
+  const syncTabDrag =
+    (
+      value: number
+    ) => {
+      tabDragXRef.current =
+        value;
+
+      setTabDragX(
+        value
       );
     };
 
-  useLayoutEffect(() => {
-    if (
-      restoreTabRef.current !==
-      activeTab
-    ) {
-      return;
-    }
-
-    restoreTabRef.current =
-      null;
-
-    void restoreScrollMemory(
-      activeTab
-    );
-  }, [
-    activeTab,
-    photos,
-  ]);
-
+  /*
+   * activeTabをボタンから切り替える場合も
+   * 横スライドアニメーションさせます。
+   */
   const switchTab =
     (
       nextTab:
@@ -828,19 +810,351 @@ function App() {
         return;
       }
 
-      saveScrollMemory(
+      /*
+       * 切替前の位置を確定保存。
+       */
+      scrollMemoryRef.current[
         activeTab
-      );
+      ] =
+        window.scrollY;
 
-      setIsRestoringScroll(
+      tabSwitchTargetRef.current =
+        nextTab;
+
+      setTabAnimating(
         true
       );
 
-      restoreTabRef.current =
-        nextTab;
+      syncTabDrag(
+        0
+      );
 
       setActiveTab(
         nextTab
+      );
+    };
+
+  /*
+   * transitionendが発火しない環境向けの保険。
+   */
+  useEffect(() => {
+    if (
+      !tabAnimating ||
+      !tabSwitchTargetRef.current
+    ) {
+      return;
+    }
+
+    const timer =
+      window.setTimeout(
+        () => {
+          const target =
+            tabSwitchTargetRef.current;
+
+          if (!target) {
+            return;
+          }
+
+          setTabAnimating(
+            false
+          );
+
+          restoreWindowScroll(
+            target
+          );
+        },
+        TAB_SLIDE_DURATION +
+          80
+      );
+
+    return () => {
+      window.clearTimeout(
+        timer
+      );
+    };
+  }, [
+    activeTab,
+    tabAnimating,
+  ]);
+
+  const handleTabPointerDown =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      /*
+       * ボタン・リンク・タグ操作等から始まった場合は
+       * タブスワイプとして扱いません。
+       */
+      const target =
+        event.target as
+          HTMLElement;
+
+      if (
+        target.closest(
+          "button, a, input, label"
+        )
+      ) {
+        return;
+      }
+
+      if (
+        event.pointerType ===
+          "mouse" &&
+        event.button !== 0
+      ) {
+        return;
+      }
+
+      tabPointerIdRef.current =
+        event.pointerId;
+
+      tabStartRef.current = {
+        x:
+          event.clientX,
+
+        y:
+          event.clientY,
+      };
+
+      tabGestureModeRef.current =
+        "pending";
+
+      setTabAnimating(
+        false
+      );
+
+      syncTabDrag(
+        0
+      );
+    };
+
+  const handleTabPointerMove =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      if (
+        event.pointerId !==
+        tabPointerIdRef.current
+      ) {
+        return;
+      }
+
+      const dx =
+        event.clientX -
+        tabStartRef.current.x;
+
+      const dy =
+        event.clientY -
+        tabStartRef.current.y;
+
+      if (
+        tabGestureModeRef.current ===
+        "pending"
+      ) {
+        if (
+          Math.abs(dx) <
+            TAB_GESTURE_LOCK &&
+          Math.abs(dy) <
+            TAB_GESTURE_LOCK
+        ) {
+          return;
+        }
+
+        /*
+         * 縦操作が優勢ならブラウザの通常スクロールに任せます。
+         */
+        if (
+          Math.abs(dy) >
+          Math.abs(dx)
+        ) {
+          tabGestureModeRef.current =
+            "none";
+
+          tabPointerIdRef.current =
+            null;
+
+          return;
+        }
+
+        if (
+          Math.abs(dx) >
+          Math.abs(dy) *
+            1.05
+        ) {
+          tabGestureModeRef.current =
+            "swipe";
+
+          try {
+            event.currentTarget
+              .setPointerCapture(
+                event.pointerId
+              );
+          } catch {
+            // captureできなくても続行
+          }
+        }
+      }
+
+      if (
+        tabGestureModeRef.current !==
+        "swipe"
+      ) {
+        return;
+      }
+
+      let nextX =
+        dx;
+
+      /*
+       * 左端（未送信）から右へ、
+       * 右端（送信済み）から左へは
+       * 画面が存在しないので抵抗を付けます。
+       */
+      if (
+        activeTab ===
+          "pending" &&
+        nextX > 0
+      ) {
+        nextX *=
+          0.22;
+      }
+
+      if (
+        activeTab ===
+          "sent" &&
+        nextX < 0
+      ) {
+        nextX *=
+          0.22;
+      }
+
+      nextX =
+        Math.max(
+          -tabViewportWidth,
+          Math.min(
+            tabViewportWidth,
+            nextX
+          )
+        );
+
+      syncTabDrag(
+        nextX
+      );
+    };
+
+  const finishTabSwipe =
+    () => {
+      const x =
+        tabDragXRef.current;
+
+      const threshold =
+        Math.max(
+          TAB_SWIPE_MIN,
+          tabViewportWidth *
+            0.18
+        );
+
+      let nextTab =
+        activeTab;
+
+      if (
+        activeTab ===
+          "pending" &&
+        x <=
+          -threshold
+      ) {
+        nextTab =
+          "sent";
+      }
+
+      if (
+        activeTab ===
+          "sent" &&
+        x >=
+          threshold
+      ) {
+        nextTab =
+          "pending";
+      }
+
+      setTabAnimating(
+        true
+      );
+
+      syncTabDrag(
+        0
+      );
+
+      if (
+        nextTab !==
+        activeTab
+      ) {
+        scrollMemoryRef.current[
+          activeTab
+        ] =
+          window.scrollY;
+
+        tabSwitchTargetRef.current =
+          nextTab;
+
+        setActiveTab(
+          nextTab
+        );
+      }
+    };
+
+  const handleTabPointerUp =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      if (
+        event.pointerId !==
+        tabPointerIdRef.current
+      ) {
+        return;
+      }
+
+      if (
+        tabGestureModeRef.current ===
+        "swipe"
+      ) {
+        finishTabSwipe();
+      }
+
+      tabPointerIdRef.current =
+        null;
+
+      tabGestureModeRef.current =
+        "none";
+    };
+
+  const handleTabPointerCancel =
+    (
+      event:
+        ReactPointerEvent<HTMLDivElement>
+    ) => {
+      if (
+        event.pointerId !==
+        tabPointerIdRef.current
+      ) {
+        return;
+      }
+
+      tabPointerIdRef.current =
+        null;
+
+      tabGestureModeRef.current =
+        "none";
+
+      setTabAnimating(
+        true
+      );
+
+      syncTabDrag(
+        0
       );
     };
 
@@ -1127,97 +1441,72 @@ function App() {
       }
     };
 
-  const handlePageTouchStart =
+  const renderPhotoList =
     (
-      event:
-        TouchEvent<HTMLDivElement>
-    ) => {
-      const touch =
-        event.touches[0];
-
-      if (!touch) {
-        return;
-      }
-
-      tabTouchStartX.current =
-        touch.clientX;
-
-      tabTouchStartY.current =
-        touch.clientY;
-    };
-
-  const handlePageTouchEnd =
-    (
-      event:
-        TouchEvent<HTMLDivElement>
+      list:
+        StoredPhoto[]
     ) => {
       if (
-        tabTouchStartX.current ===
-        null
+        list.length ===
+        0
       ) {
-        return;
-      }
-
-      const touch =
-        event.changedTouches[0];
-
-      if (!touch) {
-        return;
-      }
-
-      const dx =
-        touch.clientX -
-        tabTouchStartX.current;
-
-      const dy =
-        touch.clientY -
-        (
-          tabTouchStartY.current ??
-          touch.clientY
-        );
-
-      tabTouchStartX.current =
-        null;
-
-      tabTouchStartY.current =
-        null;
-
-      if (
-        Math.abs(dx) <
-          65 ||
-        Math.abs(dx) <=
-          Math.abs(dy) *
-            1.2
-      ) {
-        return;
-      }
-
-      if (
-        dx < 0 &&
-        activeTab ===
-          "pending"
-      ) {
-        switchTab(
-          "sent"
+        return (
+          <p className="empty-message">
+            写真はありません。
+          </p>
         );
       }
 
-      if (
-        dx > 0 &&
-        activeTab ===
-          "sent"
-      ) {
-        switchTab(
-          "pending"
-        );
-      }
+      return (
+        <div className="photo-list">
+          {list.map(
+            (photo) => (
+              <StoredPhotoCard
+                key={
+                  photo.id
+                }
+                photo={
+                  photo
+                }
+                onDelete={
+                  handleDelete
+                }
+                onTagsChange={
+                  handleTagsChange
+                }
+                onPreview={
+                  setPreviewPhotoId
+                }
+              />
+            )
+          )}
+        </div>
+      );
     };
+
+  /*
+   * trackは2画面幅。
+   *
+   * 未送信 = 0px
+   * 送信済み = -viewportWidth
+   *
+   * スワイプ中だけtabDragXを足します。
+   */
+  const activeBaseX =
+    activeTab ===
+    "pending"
+      ? 0
+      : -tabViewportWidth;
+
+  const tabTrackX =
+    activeBaseX +
+    tabDragX;
 
   return (
     <main className="container">
       {/*
-       * タイトル等は通常コンテンツ。
-       * スクロールすると上へ消えます。
+       * ここは通常スクロール。
+       * タイトルや通信状態は上へ消えます。
        */}
       <h1>
         📷 Box Photo
@@ -1292,7 +1581,6 @@ function App() {
 
       {/*
        * ★ここだけsticky。
-       * タイトル・通信状態・カメラボタンは固定しません。
        */}
       <div className="sticky-tab-area">
         <div className="photo-tabs">
@@ -1344,91 +1632,137 @@ function App() {
         </div>
       </div>
 
+      {/*
+       * ★タブ以下だけが独立した横スライド領域。
+       * 未送信・送信済みpaneを両方常駐させます。
+       */}
       <div
-        className={
-          isRestoringScroll
-            ? "swipe-page restoring-scroll"
-            : "swipe-page"
+        ref={
+          tabViewportRef
         }
-        data-tab={
-          activeTab
+        className="tab-viewport"
+        style={{
+          height:
+            `${Math.max(
+              paneHeights.pending,
+              paneHeights.sent,
+              420
+            )}px`,
+        }}
+        onPointerDown={
+          handleTabPointerDown
         }
-        onTouchStart={
-          handlePageTouchStart
+        onPointerMove={
+          handleTabPointerMove
         }
-        onTouchEnd={
-          handlePageTouchEnd
+        onPointerUp={
+          handleTabPointerUp
+        }
+        onPointerCancel={
+          handleTabPointerCancel
         }
       >
-        {activeTab ===
-          "pending" && (
-          <button
-            type="button"
-            className="upload-button"
-            onClick={
-              uploadPhotos
+        <div
+          className="tab-track"
+          style={{
+            width:
+              `${tabViewportWidth * 2}px`,
+
+            transform:
+              `translate3d(${tabTrackX}px, 0, 0)`,
+
+            transition:
+              tabAnimating
+                ? `transform ${TAB_SLIDE_DURATION}ms cubic-bezier(.22,.61,.36,1)`
+                : "none",
+          }}
+          onTransitionEnd={() => {
+            setTabAnimating(
+              false
+            );
+
+            const target =
+              tabSwitchTargetRef.current;
+
+            if (target) {
+              restoreWindowScroll(
+                target
+              );
             }
-            disabled={
-              !isOnline ||
-              isUploading ||
-              pendingPhotos.length ===
-                0
+          }}
+        >
+          <section
+            ref={
+              pendingPaneRef
+            }
+            className="tab-pane"
+            style={{
+              width:
+                `${tabViewportWidth}px`,
+            }}
+            aria-hidden={
+              activeTab !==
+              "pending"
             }
           >
-            {isUploading
-              ? "送信中…"
-              : !isOnline
-                ? "オフラインのため送信できません"
-                : `未送信 ${pendingPhotos.length}件をBoxへ送信`}
-          </button>
-        )}
+            <div className="tab-pane-inner">
+              <button
+                type="button"
+                className="upload-button"
+                onClick={
+                  uploadPhotos
+                }
+                disabled={
+                  !isOnline ||
+                  isUploading ||
+                  pendingPhotos.length ===
+                    0
+                }
+              >
+                {isUploading
+                  ? "送信中…"
+                  : !isOnline
+                    ? "オフラインのため送信できません"
+                    : `未送信 ${pendingPhotos.length}件をBoxへ送信`}
+              </button>
 
-        {displayedPhotos.length ===
-        0 ? (
-          <p className="empty-message">
-            {activeTab ===
-            "pending"
-              ? "未送信写真はありません。"
-              : "送信済み写真はありません。"}
-          </p>
-        ) : (
-          <div className="photo-list">
-            {displayedPhotos.map(
-              (photo) => (
-                <div
-                  key={
-                    photo.id
-                  }
-                  data-photo-id={
-                    photo.id
-                  }
-                >
-                  <StoredPhotoCard
-                    photo={
-                      photo
-                    }
-                    onDelete={
-                      handleDelete
-                    }
-                    onTagsChange={
-                      handleTagsChange
-                    }
-                    onPreview={
-                      setPreviewPhotoId
-                    }
-                  />
-                </div>
-              )
-            )}
-          </div>
-        )}
+              {renderPhotoList(
+                pendingPhotos
+              )}
 
-        <p className="swipe-guide">
-          {activeTab ===
-          "pending"
-            ? "← スワイプで送信済み"
-            : "スワイプで未送信 →"}
-        </p>
+              <p className="swipe-guide">
+                ←
+                スワイプで送信済み
+              </p>
+            </div>
+          </section>
+
+          <section
+            ref={
+              sentPaneRef
+            }
+            className="tab-pane"
+            style={{
+              width:
+                `${tabViewportWidth}px`,
+            }}
+            aria-hidden={
+              activeTab !==
+              "sent"
+            }
+          >
+            <div className="tab-pane-inner">
+              {renderPhotoList(
+                sentPhotos
+              )}
+
+              <p className="swipe-guide">
+                スワイプで未送信
+                →
+              </p>
+            </div>
+          </section>
+        </div>
       </div>
 
       <label className="floating-camera-button">
